@@ -1,0 +1,16 @@
+{
+  "name": "caminos-rurales-carlos-tejedor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema de relevamiento, consolidación y gestión de reclamos de caminos rurales de Carlos Tejedor",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:admin": "npm --workspace=apps/admin run dev",
+    "build:admin": "npm --workspace=apps/admin run build",
+    "dev:mobile": "npm --workspace=apps/mobile run start",
+    "typecheck": "npm --workspaces --if-present run typecheck"
+  }
+}
