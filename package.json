@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "description": "Sistema de relevamiento, consolidación y gestión de reclamos de caminos rurales de Carlos Tejedor",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
   "scripts": {
-    "dev:admin": "npm --workspace=apps/admin run dev",
-    "build:admin": "npm --workspace=apps/admin run build",
-    "dev:mobile": "npm --workspace=apps/mobile run start",
-    "typecheck": "npm --workspaces --if-present run typecheck"
+    "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
+    "db:test": "node --env-file=.env scripts/db-test.mjs",
+    "dev:admin": "npm --prefix apps/admin run dev",
+    "build:admin": "npm --prefix apps/admin run build",
+    "dev:mobile": "npm --prefix apps/mobile run start"
+  },
+  "devDependencies": {
+    "pg": "^8.13.1",
+    "typescript": "^5.4.0"
   }
 }
