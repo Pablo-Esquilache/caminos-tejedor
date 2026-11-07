@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Caminos Rurales Carlos Tejedor",
+    "slug": "caminos-rurales-tejedor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "caminosrurales",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ar.gob.carlostejedor.caminosrurales",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Necesitamos tu ubicación para registrar el trazado del camino rural mientras grabás un recorrido y para ubicar reclamos viales.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Necesitamos acceso al GPS en segundo plano únicamente mientras tenés una grabación de camino activa, para que el recorrido no se corte al apagar la pantalla.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "package": "ar.gob.carlostejedor.caminosrurales",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permitir que Caminos Rurales registre tu ubicación mientras grabás un recorrido con la pantalla apagada.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ]
+  }
+}

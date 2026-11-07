@@ -22,40 +22,56 @@ async function main() {
   await client.connect();
   console.log('🔌 Conectado exitosamente a Supabase PostgreSQL (Session Pooler).');
 
-  client.on('notice', (msg) => {
-    console.log(`   [NOTICE] ${msg.message}`);
-  });
-
   try {
+    // Tabla de control de migraciones aplicadas
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public._schema_migrations (
+        filename text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      ALTER TABLE public._schema_migrations ENABLE ROW LEVEL SECURITY;
+    `);
+
+    // Si las 4 iniciales ya se habían aplicado antes de existir _schema_migrations, registrarlas
+    const existingTables = await client.query(`
+      SELECT count(*)::int AS cnt FROM pg_policies WHERE schemaname = 'public' AND tablename = 'profiles';
+    `);
+    if (existingTables.rows[0].cnt > 0) {
+      for (const initFile of [
+        '20261106000001_initial_schema.sql',
+        '20261106000002_functions_and_triggers.sql',
+        '20261106000003_rls_and_storage.sql',
+        '20261106000004_seed_initial_data.sql',
+      ]) {
+        await client.query(
+          `INSERT INTO public._schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`,
+          [initFile]
+        );
+      }
+    }
+
+    const appliedRes = await client.query(`SELECT filename FROM public._schema_migrations`);
+    const appliedSet = new Set(appliedRes.rows.map((r) => r.filename));
+
     const files = fs
       .readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
 
     for (const file of files) {
+      if (appliedSet.has(file)) {
+        console.log(`⏭️  Ya aplicada: ${file}`);
+        continue;
+      }
       const filePath = path.join(migrationsDir, file);
       const sql = fs.readFileSync(filePath, 'utf8');
-      console.log(`🚀 Aplicando migración: ${file}...`);
+      console.log(`🚀 Aplicando migración nueva: ${file}...`);
       await client.query(sql);
+      await client.query(
+        `INSERT INTO public._schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING`,
+        [file]
+      );
       console.log(`✅ Migración aplicada: ${file}`);
-    }
-
-    const res = await client.query(`
-      SELECT tablename, rowsecurity
-      FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tablename IN (
-          'profiles', 'admins', 'trips', 'trip_tracks',
-          'roads', 'road_segments', 'trip_segment_usage', 'road_name_aliases',
-          'claim_categories', 'claims', 'claim_photos', 'claim_history',
-          'notifications', 'audit_log', 'settings'
-        )
-      ORDER BY tablename;
-    `);
-
-    console.log(`\n📊 Tablas verificadas en esquema public (${res.rowCount}/15):`);
-    for (const row of res.rows) {
-      console.log(`   - ${row.tablename} (RLS: ${row.rowsecurity ? 'ACTIVO' : 'INACTIVO'})`);
     }
   } finally {
     await client.end();
