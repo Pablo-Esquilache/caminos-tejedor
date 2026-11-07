@@ -17,8 +17,8 @@ async function main() {
     `);
     console.log(`Encontrados ${res.rows.length} recorridos aprobados.`);
     for (const row of res.rows) {
-      const c = await client.query(`SELECT public.consolidate_trip($1) AS road_id`, [row.id]);
-      console.log(`✅ Recorrido "${row.original_name}" (${row.id}) consolidado en camino: ${c.rows[0].road_id}`);
+      const c = await client.query(`SELECT public.consolidate_trip($1) AS result`, [row.id]);
+      console.log(`✅ Recorrido "${row.original_name}" (${row.id}) consolidado:`, c.rows[0].result);
     }
     await client.query(`SELECT public.reclassify_all_roads()`);
     const roads = await client.query(`
