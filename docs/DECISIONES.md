@@ -34,3 +34,15 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
 * **Decisión:**
   * El vecino ve en su listado los estados `"En revisión"` (`pending`), `"Aprobado"` (`approved`) o `"No incluido en el mapa"` (`rejected`).
   * Cuando se graba un recorrido o se crea un reclamo sin conexión a internet, la app guarda los datos localmente y muestra un aviso explícito indicando que se sincronizará automáticamente al recuperar señal.
+
+---
+
+## 2026-11-07 — Algoritmo de Consolidación Espacial en PostGIS (Fase 0 / Fase 4)
+
+### 7. Parámetros Espaciales Elegidos y Manejo de Curvas/Cruces en `EPSG:32720`
+* **Algoritmo (`public.consolidate_trip`):**
+  * Se proyectan las geometrías a `EPSG:32720` (UTM Zona 20 Sur) para trabajar en metros reales.
+  * Se colapsan las paradas largas con `ST_RemoveRepeatedPoints(geom, 12.0)`.
+  * Para distinguir caminos con curvas de cruces perpendiculares a 90° o caminos paralelos cercanos, la función `public.lines_have_similar_direction` muestrea 5 sub-tramos a lo largo de la intersección con el buffer (`25 m`) y compara el azimut local (`ST_Azimuth`) contra la proyección sobre el segmento existente, aceptando ambos sentidos de circulación (`0°` y `180°`) con una tolerancia angular máxima de `30°` y un largo mínimo compartido de `80 m`.
+* **Casos límite documentados:**
+  * Dos caminos rurales paralelos separados por menos de `25 m` (por ejemplo, colectora pegada a una ruta sin alambrado intermedio) podrían caer dentro del mismo buffer; si se detecta ese caso en un paraje específico, se puede reducir `buffer_tolerance_m` a `18 m` en la tabla `settings` y ejecutar `public.reprocess_all_roads()` desde el panel sin perder ningún dato original.

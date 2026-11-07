@@ -15,7 +15,7 @@ import {
   ChevronRight,
   ArrowLeft,
   Compass,
-  AlertTriangle,
+  AlertTriangle, Map as MapIcon,
 } from 'lucide-react';
 import {
   TRIP_STATUS_USER_LABELS,
@@ -43,6 +43,7 @@ import {
   type PendingTripOutboxItem,
 } from './lib/localDb';
 import { RouteMap } from './components/RouteMap';
+import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
 
 const PAGE_SIZE = 20;
 const PERMISSION_EXPLAINED_KEY = 'caminos_tejedor_gps_explained_v1';
@@ -60,7 +61,7 @@ export const App: React.FC = () => {
   const [loginBusy, setLoginBusy] = useState(false);
 
   // Navegación principal
-  const [activeTab, setActiveTab] = useState<'record' | 'trips'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map'>('record');
 
   // Estado de red y cola offline (outbox)
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -1169,6 +1170,11 @@ export const App: React.FC = () => {
             )}
           </div>
         )}
+        {activeTab === 'map' && (
+          <div className="tab-pane">
+            <ConsolidatedRoadsMap />
+          </div>
+        )}
       </main>
 
       {/* Barra de Navegación Inferior */}
@@ -1191,6 +1197,14 @@ export const App: React.FC = () => {
         >
           <Clock size={20} />
           <span>Mis recorridos</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'map' ? 'nav-item active' : 'nav-item'}
+          onClick={() => setActiveTab('map')}
+        >
+          <MapIcon size={20} />
+          <span>Mapa</span>
         </button>
       </nav>
     </div>

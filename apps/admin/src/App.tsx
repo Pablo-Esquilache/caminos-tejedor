@@ -19,8 +19,16 @@ import {
   ShieldCheck,
   Clock,
   Navigation,
+  Edit3,
+  Merge,
+  Sliders,
 } from 'lucide-react';
-import { TRIP_STATUS_ADMIN_LABELS, type TripStatus } from '@shared';
+import {
+  ROAD_CLASS_LABELS,
+  TRIP_STATUS_ADMIN_LABELS,
+  type RoadClass,
+  type TripStatus,
+} from '@shared';
 import { supabase } from './lib/supabase';
 import { formatDateTime, formatDistance, formatDuration } from './lib/format';
 import { AdminMap } from './components/AdminMap';
@@ -81,6 +89,17 @@ interface AdminTripDetail {
   reviewer_info: { full_name: string | null; email: string | null } | null;
 }
 
+interface AdminRoadRow {
+  id: string;
+  normalized_name: string;
+  road_class: RoadClass;
+  total_length_m: number;
+  approved_trips_count: number;
+  unique_users_count: number;
+  updated_at: string;
+  aliases: string[];
+}
+
 interface AdminUserRow {
   id: string;
   full_name: string | null;
@@ -128,7 +147,7 @@ export const App: React.FC = () => {
   const [tripsPage, setTripsPage] = useState(0);
   const [tripsLoading, setTripsLoading] = useState(false);
 
-  // Selección en lote
+  // Selección en lote de recorridos
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchBusy, setBatchBusy] = useState(false);
 
@@ -138,6 +157,24 @@ export const App: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [reviewNote, setReviewNote] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
+
+  // Caminos Consolidados (Fase 4)
+  const [roadsList, setRoadsList] = useState<AdminRoadRow[]>([]);
+  const [roadsTotal, setRoadsTotal] = useState(0);
+  const [roadsPage, setRoadsPage] = useState(0);
+  const [roadsLoading, setRoadsLoading] = useState(false);
+  const [selectedRoadIds, setSelectedRoadIds] = useState<string[]>([]);
+  const [editingRoadId, setEditingRoadId] = useState<string | null>(null);
+  const [editingRoadName, setEditingRoadName] = useState('');
+  const [troncalMin, setTroncalMin] = useState(25);
+  const [principalMin, setPrincipalMin] = useState(10);
+  const [secundarioMin, setSecundarioMin] = useState(3);
+  const [proposedPercentiles, setProposedPercentiles] = useState<{
+    p90_troncal: number;
+    p70_principal: number;
+    p40_secundario: number;
+  }>({ p90_troncal: 5, p70_principal: 3, p40_secundario: 2 });
+  const [reprocessingBusy, setReprocessingBusy] = useState(false);
 
   // Usuarios
   const [usersList, setUsersList] = useState<AdminUserRow[]>([]);
@@ -150,7 +187,6 @@ export const App: React.FC = () => {
     window.setTimeout(() => setToastMsg(null), 5000);
   };
 
-  // Verificar sesión y rol administrador mediante is_admin()
   const verifySessionAndAdmin = async (currentSession: Session | null) => {
     if (!currentSession?.user) {
       setSession(null);
@@ -192,6 +228,7 @@ export const App: React.FC = () => {
     if (!isAdminVerified) return;
     loadDashboardSummary();
     loadTrips(0);
+    loadRoads(0);
     loadUsers(0);
   }, [isAdminVerified]);
 
@@ -227,6 +264,29 @@ export const App: React.FC = () => {
       setTripsPage(pageIdx);
     }
     setTripsLoading(false);
+  };
+
+  const loadRoads = async (pageIdx: number) => {
+    setRoadsLoading(true);
+    const { data, error } = await supabase.rpc('get_admin_roads_list', {
+      p_limit: PAGE_SIZE,
+      p_offset: pageIdx * PAGE_SIZE,
+    });
+
+    if (!error && data) {
+      setRoadsList((data.items || []) as AdminRoadRow[]);
+      setRoadsTotal(Number(data.total || 0));
+      setRoadsPage(pageIdx);
+      if (data.current_thresholds) {
+        setTroncalMin(Number(data.current_thresholds.troncal_min_trips || 25));
+        setPrincipalMin(Number(data.current_thresholds.principal_min_trips || 10));
+        setSecundarioMin(Number(data.current_thresholds.secundario_min_trips || 3));
+      }
+      if (data.proposed_percentiles) {
+        setProposedPercentiles(data.proposed_percentiles);
+      }
+    }
+    setRoadsLoading(false);
   };
 
   const loadUsers = async (pageIdx: number) => {
@@ -278,20 +338,23 @@ export const App: React.FC = () => {
     }
 
     const actionLabels: Record<TripStatus, string> = {
-      approved: 'Recorrido aprobado y auditado en audit_log.',
+      approved:
+        'Recorrido aprobado, consolidado en la red de caminos y auditado en audit_log.',
       rejected: 'Recorrido rechazado y auditado en audit_log.',
-      pending: 'Aprobación revocada: el recorrido volvió a estado Pendiente.',
+      pending:
+        'Aprobación revocada: se desconsolidó de la red y volvió a estado Pendiente.',
     };
     showToast(actionLabels[newStatus]);
     await openTripDetail(detailData.id);
     await loadDashboardSummary();
     await loadTrips(tripsPage);
+    await loadRoads(roadsPage);
   };
 
   const handleBatchApprove = async () => {
     if (selectedIds.length === 0) return;
     const confirmed = window.confirm(
-      `¿Confirmás aprobar en lote los ${selectedIds.length} recorridos seleccionados? Todos los cambios quedarán registrados en audit_log.`
+      `¿Confirmás aprobar y consolidar en lote los ${selectedIds.length} recorridos seleccionados?`
     );
     if (!confirmed) return;
 
@@ -308,14 +371,98 @@ export const App: React.FC = () => {
       return;
     }
 
-    showToast(`Se aprobaron ${data} recorrido(s) en lote correctamente.`);
+    showToast(`Se aprobaron y consolidaron ${data} recorrido(s) en lote.`);
     setSelectedIds([]);
     await loadDashboardSummary();
     await loadTrips(tripsPage);
+    await loadRoads(roadsPage);
+  };
+
+  // Acciones de Fase 4: Renombrar, Unificar, Clasificar y Reprocesar Caminos
+  const handleSaveRoadName = async (roadId: string) => {
+    if (!editingRoadName.trim()) return;
+    const { error } = await supabase.rpc('rename_road', {
+      p_road_id: roadId,
+      p_new_name: editingRoadName.trim(),
+    });
+    if (error) {
+      alert(`Error al renombrar camino: ${error.message}`);
+      return;
+    }
+    setEditingRoadId(null);
+    showToast('Nombre normalizado actualizado y registrado en audit_log.');
+    await loadRoads(roadsPage);
+  };
+
+  const handleMergeSelectedRoads = async () => {
+    if (selectedRoadIds.length < 2) return;
+    const targetId = selectedRoadIds[0];
+    const targetRoad = roadsList.find((r) => r.id === targetId);
+    const newName = window.prompt(
+      `Vas a unificar ${selectedRoadIds.length} caminos en uno solo (se conservan todos los tramos y alias originales). Ingresá el nombre normalizado definitivo:`,
+      targetRoad?.normalized_name || ''
+    );
+    if (!newName) return;
+
+    const { error } = await supabase.rpc('merge_roads', {
+      p_target_road_id: targetId,
+      p_source_road_ids: selectedRoadIds,
+      p_new_normalized_name: newName.trim(),
+    });
+    if (error) {
+      alert(`Error al unificar caminos: ${error.message}`);
+      return;
+    }
+
+    setSelectedRoadIds([]);
+    showToast('Caminos unificados exitosamente. Todos los alias originales fueron conservados.');
+    await loadRoads(0);
+  };
+
+  const handleApplyThresholds = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { error } = await supabase.rpc('update_classification_thresholds', {
+      p_troncal: troncalMin,
+      p_principal: principalMin,
+      p_secundario: secundarioMin,
+    });
+    if (error) {
+      alert(`Error al actualizar umbrales: ${error.message}`);
+      return;
+    }
+    showToast('Umbrales guardados y clasificación de caminos recalculada.');
+    await loadRoads(roadsPage);
+  };
+
+  const handleReprocessAllRoads = async () => {
+    const ok = window.confirm(
+      '¿Confirmás reconstruir toda la red de caminos desde cero a partir de los recorridos aprobados y las trazas originales inmutables (trip_tracks)?'
+    );
+    if (!ok) return;
+    setReprocessingBusy(true);
+    const { data, error } = await supabase.rpc('reprocess_all_roads');
+    setReprocessingBusy(false);
+
+    if (error) {
+      alert(`Error al reprocesar: ${error.message}`);
+      return;
+    }
+    showToast(
+      `Red reconstruida: ${data?.trips_processed || 0} recorrido(s) procesados → ${
+        data?.resulting_roads || 0
+      } camino(s) consolidados.`
+    );
+    await loadRoads(0);
   };
 
   const toggleSelectRow = (id: string) => {
     setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectRoadRow = (id: string) => {
+    setSelectedRoadIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
@@ -351,7 +498,6 @@ export const App: React.FC = () => {
     await supabase.auth.signOut();
   };
 
-  // Calcular estadísticas de precisión GPS del recorrido abierto
   const computeGpsStats = (
     pts: Array<{ lat: number; lon: number; accuracy: number }> | null | undefined
   ) => {
@@ -376,7 +522,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // LOGIN DE ADMINISTRADOR (Sin registro público)
   if (!session || !isAdminVerified) {
     return (
       <div className="admin-login-page">
@@ -491,11 +636,12 @@ export const App: React.FC = () => {
             className={section === 'roads' ? 'side-link active' : 'side-link'}
             onClick={() => {
               setDetailTripId(null);
+              loadRoads(roadsPage);
               setSection('roads');
             }}
           >
             <GitBranch size={18} />
-            <span>Caminos</span>
+            <span>Caminos ({roadsTotal})</span>
           </button>
 
           <button
@@ -555,13 +701,13 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* SECCIÓN 1: PORTADA CON INDICADORES SIMPLES */}
+        {/* SECCIÓN 1: PORTADA */}
         {section === 'dashboard' && (
           <div className="admin-page">
             <div className="page-header">
               <div>
                 <h1>Resumen Operativo — Partido de Carlos Tejedor</h1>
-                <p>Estado actual de relevamiento y validación de recorridos viales</p>
+                <p>Estado actual de relevamiento, validación y red consolidada de caminos</p>
               </div>
               <button
                 type="button"
@@ -569,6 +715,7 @@ export const App: React.FC = () => {
                 onClick={() => {
                   loadDashboardSummary();
                   loadTrips(tripsPage);
+                  loadRoads(roadsPage);
                 }}
               >
                 <RefreshCw size={15} /> Actualizar indicadores
@@ -597,21 +744,24 @@ export const App: React.FC = () => {
               >
                 <span className="kpi-title">Recorridos aprobados</span>
                 <strong className="kpi-number">{summary.approved_trips_count}</strong>
-                <span className="kpi-sub">Validados e incluidos en el mapa operativo</span>
+                <span className="kpi-sub">Validados e integrados a la red consolidada</span>
               </div>
 
-              <div className="kpi-card">
-                <span className="kpi-title">Kilómetros aprobados</span>
+              <div
+                className="kpi-card"
+                onClick={() => setSection('roads')}
+              >
+                <span className="kpi-title">Kilómetros aprobados ({roadsTotal} caminos)</span>
                 <strong className="kpi-number">
                   {Number(summary.approved_km).toLocaleString('es-AR')} km
                 </strong>
-                <span className="kpi-sub">Total acumulado de recorridos aprobados</span>
+                <span className="kpi-sub">Ver red consolidada y clasificación →</span>
               </div>
             </div>
 
             <div className="panel-card">
               <div className="card-header-row">
-                <h2>Vista rápida del Mapa del Partido</h2>
+                <h2>Mapa Operativo de Caminos Consolidados y Recorridos</h2>
                 <button
                   type="button"
                   className="btn-outline"
@@ -636,7 +786,7 @@ export const App: React.FC = () => {
               <div>
                 <h1>Mapa General del Partido de Carlos Tejedor</h1>
                 <p>
-                  Carga dinámica por área visible (Bounding Box) usando geometrías simplificadas. Hacé clic sobre cualquier traza para abrir su validación.
+                  Muestra la Red Consolidada de Caminos (con grosor y color según intensidad de uso y etiquetas de nombre) más los recorridos pendientes.
                 </p>
               </div>
             </div>
@@ -648,7 +798,7 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* SECCIÓN 3: BANDEJA DE VALIDACIÓN DE RECORRIDOS Y DETALLE */}
+        {/* SECCIÓN 3: BANDEJA DE VALIDACIÓN DE RECORRIDOS */}
         {section === 'trips' && (
           <div className="admin-page">
             {detailTripId ? (
@@ -678,12 +828,11 @@ export const App: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* Origen de aprobación (Automática por Admin vs Manual) */}
                       <div className="approval-audit-box">
                         {detailData.status === 'approved' && detailData.auto_approved && (
                           <p>
                             <ShieldCheck size={16} />{' '}
-                            <strong>Aprobado automáticamente:</strong> Este recorrido fue registrado por un usuario Administrador ({detailData.user_info?.email}).
+                            <strong>Aprobado automáticamente:</strong> Registrado por un usuario Administrador ({detailData.user_info?.email}).
                           </p>
                         )}
                         {detailData.status === 'approved' && !detailData.auto_approved && (
@@ -704,7 +853,7 @@ export const App: React.FC = () => {
                         {detailData.status === 'pending' && (
                           <p>
                             <Clock size={16} />{' '}
-                            <strong>Pendiente de validación municipal.</strong> No suma a la red consolidada ni a las estadísticas hasta ser aprobado.
+                            <strong>Pendiente de validación municipal.</strong> Al aprobarlo se consolida automáticamente en la red de caminos.
                           </p>
                         )}
                       </div>
@@ -766,7 +915,6 @@ export const App: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Acciones de Validación con Auditoría */}
                       <div className="review-actions-box">
                         <label>
                           Nota de revisión (opcional, queda en <code>audit_log</code>):
@@ -786,7 +934,7 @@ export const App: React.FC = () => {
                               disabled={reviewBusy}
                               onClick={() => handleReviewAction('approved')}
                             >
-                              <CheckCircle2 size={18} /> Aprobar recorrido
+                              <CheckCircle2 size={18} /> Aprobar y Consolidar
                             </button>
                           )}
 
@@ -850,7 +998,6 @@ export const App: React.FC = () => {
                   )}
                 </div>
 
-                {/* Filtros por Estado y Fecha */}
                 <div className="filters-bar">
                   <div className="status-tabs">
                     {[
@@ -902,7 +1049,6 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Tabla Paginada (25 por página) */}
                 <div className="table-responsive">
                   <table className="admin-table">
                     <thead>
@@ -987,7 +1133,6 @@ export const App: React.FC = () => {
                   </table>
                 </div>
 
-                {/* Paginación */}
                 {tripsTotal > PAGE_SIZE && (
                   <div className="pagination-row">
                     <span>
@@ -1018,15 +1163,209 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* SECCIÓN 4: CAMINOS (Se completa en Fase 4) */}
+        {/* SECCIÓN 4: CAMINOS CONSOLIDADOS, NOMBRES Y CLASIFICACIÓN (Fase 4) */}
         {section === 'roads' && (
           <div className="admin-page">
-            <div className="panel-card empty-module">
-              <GitBranch size={38} />
-              <h2>Red Consolidada de Caminos Rurales (Fase 4)</h2>
-              <p>
-                En la Fase 4 activamos el algoritmo espacial en PostGIS (<code>consolidate_trip</code>), la normalización de nombres y la clasificación por uso (troncal, principal, secundario y vecinal).
-              </p>
+            {/* Bloque de Clasificación por Uso y Reprocesamiento */}
+            <div className="panel-card">
+              <div className="card-header-row">
+                <div>
+                  <h2>
+                    <Sliders size={18} style={{ verticalAlign: 'middle', marginRight: 6 }} />
+                    Clasificación Jerárquica por Frecuencia de Uso
+                  </h2>
+                  <p>
+                    Umbrales en <code>settings</code> (cantidad de recorridos aprobados). Propuesta actual por percentiles de distribución: Troncal (P90) ≥{' '}
+                    <b>{proposedPercentiles.p90_troncal}</b>, Principal (P70) ≥{' '}
+                    <b>{proposedPercentiles.p70_principal}</b>, Secundario (P40) ≥{' '}
+                    <b>{proposedPercentiles.p40_secundario}</b>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  disabled={reprocessingBusy}
+                  onClick={handleReprocessAllRoads}
+                >
+                  <RefreshCw size={15} />
+                  {reprocessingBusy
+                    ? 'Reprocesando red...'
+                    : 'Reprocesar toda la red desde cero'}
+                </button>
+              </div>
+
+              <form className="thresholds-form" onSubmit={handleApplyThresholds}>
+                <label>
+                  Troncal (mín. recorridos)
+                  <input
+                    type="number"
+                    min={1}
+                    value={troncalMin}
+                    onChange={(e) => setTroncalMin(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  Principal (mín. recorridos)
+                  <input
+                    type="number"
+                    min={1}
+                    value={principalMin}
+                    onChange={(e) => setPrincipalMin(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  Secundario (mín. recorridos)
+                  <input
+                    type="number"
+                    min={1}
+                    value={secundarioMin}
+                    onChange={(e) => setSecundarioMin(Number(e.target.value))}
+                  />
+                </label>
+                <div className="thresholds-btns">
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={() => {
+                      setTroncalMin(proposedPercentiles.p90_troncal);
+                      setPrincipalMin(proposedPercentiles.p70_principal);
+                      setSecundarioMin(proposedPercentiles.p40_secundario);
+                    }}
+                  >
+                    Cargar percentiles sugeridos
+                  </button>
+                  <button type="submit" className="btn-approve">
+                    Confirmar y Recalcular clasificación
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Listado de Caminos Consolidados */}
+            <div className="panel-card">
+              <div className="card-header-row">
+                <div>
+                  <h1>Red de Caminos Consolidados ({roadsTotal})</h1>
+                  <p>
+                    Podés renombrar el nombre normalizado o seleccionar dos o más caminos que correspondan al mismo trazado para unificarlos conservando todos sus alias.
+                  </p>
+                </div>
+
+                {selectedRoadIds.length >= 2 && (
+                  <button
+                    type="button"
+                    className="btn-approve"
+                    onClick={handleMergeSelectedRoads}
+                  >
+                    <Merge size={17} />
+                    Unificar caminos seleccionados ({selectedRoadIds.length})
+                  </button>
+                )}
+              </div>
+
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 42 }} />
+                      <th>Nombre normalizado</th>
+                      <th>Clasificación</th>
+                      <th>Kilómetros</th>
+                      <th>Recorridos aprobados</th>
+                      <th>Usuarios distintos</th>
+                      <th>Alias originales (nombres de vecinos)</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roadsLoading ? (
+                      <tr>
+                        <td colSpan={8} className="empty-cell">
+                          Cargando red de caminos...
+                        </td>
+                      </tr>
+                    ) : roadsList.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="empty-cell">
+                          Todavía no hay caminos consolidados. Hacé clic arriba en{' '}
+                          <b>"Reprocesar toda la red desde cero"</b> o aprobá un recorrido.
+                        </td>
+                      </tr>
+                    ) : (
+                      roadsList.map((r) => (
+                        <tr key={r.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selectedRoadIds.includes(r.id)}
+                              onChange={() => toggleSelectRoadRow(r.id)}
+                            />
+                          </td>
+                          <td>
+                            {editingRoadId === r.id ? (
+                              <div className="inline-edit-row">
+                                <input
+                                  type="text"
+                                  value={editingRoadName}
+                                  onChange={(e) => setEditingRoadName(e.target.value)}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-approve"
+                                  onClick={() => handleSaveRoadName(r.id)}
+                                >
+                                  Guardar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-outline"
+                                  onClick={() => setEditingRoadId(null)}
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            ) : (
+                              <strong>{r.normalized_name}</strong>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`road-class-badge class-${r.road_class}`}>
+                              {ROAD_CLASS_LABELS[r.road_class]}
+                            </span>
+                          </td>
+                          <td>{formatDistance(Number(r.total_length_m))}</td>
+                          <td>
+                            <strong>{r.approved_trips_count}</strong>
+                          </td>
+                          <td>{r.unique_users_count}</td>
+                          <td>
+                            <div className="aliases-wrap">
+                              {(r.aliases || []).map((al) => (
+                                <span key={al} className="alias-chip">
+                                  {al}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="btn-table-action"
+                              onClick={() => {
+                                setEditingRoadId(r.id);
+                                setEditingRoadName(r.normalized_name);
+                              }}
+                            >
+                              <Edit3 size={14} style={{ marginRight: 4 }} />
+                              Renombrar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
