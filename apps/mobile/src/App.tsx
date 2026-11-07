@@ -339,14 +339,15 @@ export const App: React.FC = () => {
         const idx = simStepRef.current;
         if (idx < route.coords.length) {
           const [lon, lat] = route.coords[idx];
-          handleIncomingPoint(buildSimulatedPoint(lon, lat, 6));
+          handleIncomingPoint(buildSimulatedPoint(lon, lat, 5));
         } else {
-          // Pequeña interpolación hacia adelante para recorridos largos
-          const last = route.coords[route.coords.length - 1];
-          const extraOffset = (idx - route.coords.length + 1) * 0.0025;
-          handleIncomingPoint(buildSimulatedPoint(last[0] + extraOffset, last[1] - extraOffset, 7));
+          // Si llegó al final del camino real, recorre el camino de regreso sin salirse de la traza
+          const bounceIdx =
+            route.coords.length - 1 - ((idx - route.coords.length + 1) % route.coords.length);
+          const [lon, lat] = route.coords[Math.max(0, bounceIdx)];
+          handleIncomingPoint(buildSimulatedPoint(lon, lat, 5));
         }
-      }, 1200);
+      }, 900);
       return;
     }
 
