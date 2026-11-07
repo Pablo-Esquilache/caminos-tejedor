@@ -33,6 +33,7 @@ import { supabase } from './lib/supabase';
 import { formatDateTime, formatDistance, formatDuration } from './lib/format';
 import { AdminMap } from './components/AdminMap';
 import { AdminClaimsSection } from './components/AdminClaimsSection';
+import { AdminStatsSection } from './components/AdminStatsSection';
 
 type AdminSection =
   | 'dashboard'
@@ -1473,6 +1474,19 @@ export const App: React.FC = () => {
 
         {/* SECCIÓN 7: ESTADÍSTICAS (Se completa en Fase 6) */}
         {section === 'stats' && (
+          <div className="admin-page">
+            <div className="page-header">
+              <div>
+                <h1>Estadísticas e Indicadores Municipales</h1>
+                <p>
+                  Rankings de uso de la red vial, distribución por jerarquía y concentración geográfica de reclamos (PostGIS)
+                </p>
+              </div>
+            </div>
+            <AdminStatsSection />
+          </div>
+        )}
+        {false && (
           <div className="admin-page">
             <div className="panel-card empty-module">
               <BarChart3 size={38} />
