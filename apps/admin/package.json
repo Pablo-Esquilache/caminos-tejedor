@@ -1,0 +1,28 @@
+{
+  "name": "@caminos-rurales/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173 --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5173 --host",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.48.1",
+    "caminos-rurales-carlos-tejedor": "file:../..",
+    "lucide-react": "^0.474.0",
+    "maplibre-gl": "^5.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7"
+  }
+}
