@@ -371,7 +371,7 @@ select {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
@@ -699,4 +699,55 @@ select {
   align-items: center;
   text-align: center;
   padding: 28px 16px;
+}
+
+.road-legend-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.78rem;
+  color: #374151;
+  background: #f8faf9;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.road-legend-bar span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+
+.dot-class {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot-class.troncal {
+  background: #dc2626;
+}
+
+.dot-class.principal {
+  background: #ea580c;
+}
+
+.dot-class.secundario {
+  background: #2563eb;
+}
+
+.dot-class.vecinal {
+  background: #10b981;
+}
+
+.metrics-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.bottom-nav {
+  grid-template-columns: repeat(3, 1fr);
+
 }

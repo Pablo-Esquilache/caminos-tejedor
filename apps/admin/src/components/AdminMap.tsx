@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { CARLOS_TEJEDOR_CENTER } from '@shared';
+import { CARLOS_TEJEDOR_CENTER, ROAD_CLASS_LABELS, type RoadClass } from '@shared';
 import { maptilerApiKey, supabase } from '../lib/supabase';
 import { formatDistance } from '../lib/format';
 
@@ -12,6 +12,19 @@ interface MapTripFeature {
   duration_s: number;
   started_at: string;
   auto_approved: boolean;
+  geojson: {
+    type: 'LineString';
+    coordinates: Array<[number, number]>;
+  };
+}
+
+interface MapRoadSegmentFeature {
+  segment_id: string;
+  road_id: string;
+  normalized_name: string;
+  road_class: RoadClass;
+  total_length_m: number;
+  approved_trips_count: number;
   geojson: {
     type: 'LineString';
     coordinates: Array<[number, number]>;
@@ -34,9 +47,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
-  const [showApproved, setShowApproved] = useState(true);
+  const [showConsolidatedRoads, setShowConsolidatedRoads] = useState(true);
+  const [showApproved, setShowApproved] = useState(false);
   const [showPending, setShowPending] = useState(true);
   const [visibleCount, setVisibleCount] = useState(0);
+  const [visibleRoadsCount, setVisibleRoadsCount] = useState(0);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
   const getStyleUrl = (s: 'hybrid' | 'streets') => {
@@ -44,8 +59,31 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     return `https://api.maptiler.com/maps/${styleName}/style.json?key=${maptilerApiKey}`;
   };
 
-  const fetchViewportTrips = async (map: maplibregl.Map) => {
+  const fetchViewportData = async (map: maplibregl.Map) => {
     if (mode !== 'general') return;
+    const bounds = map.getBounds();
+    setLoadingBbox(true);
+
+    // 1. Cargar Red de Caminos Consolidados por Bounding Box y Zoom
+    if (showConsolidatedRoads) {
+      const { data: roadData } = await supabase.rpc('get_consolidated_roads_map', {
+        p_min_lon: bounds.getWest(),
+        p_min_lat: bounds.getSouth(),
+        p_max_lon: bounds.getEast(),
+        p_max_lat: bounds.getNorth(),
+        p_zoom: map.getZoom(),
+      });
+      if (Array.isArray(roadData)) {
+        const segs = roadData as MapRoadSegmentFeature[];
+        setVisibleRoadsCount(segs.length);
+        updateConsolidatedRoadsLayer(map, segs);
+      }
+    } else {
+      setVisibleRoadsCount(0);
+      updateConsolidatedRoadsLayer(map, []);
+    }
+
+    // 2. Cargar Recorridos individuales (aprobados / pendientes)
     const statuses: string[] = [];
     if (showApproved) statuses.push('approved');
     if (showPending) statuses.push('pending');
@@ -53,11 +91,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     if (statuses.length === 0) {
       updateGeneralLayers(map, []);
       setVisibleCount(0);
+      setLoadingBbox(false);
       return;
     }
 
-    const bounds = map.getBounds();
-    setLoadingBbox(true);
     const { data, error } = await supabase.rpc('get_admin_map_trips', {
       p_min_lon: bounds.getWest(),
       p_min_lat: bounds.getSouth(),
@@ -71,6 +108,136 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       const items = data as MapTripFeature[];
       setVisibleCount(items.length);
       updateGeneralLayers(map, items);
+    }
+  };
+
+  const updateConsolidatedRoadsLayer = (
+    map: maplibregl.Map,
+    segs: MapRoadSegmentFeature[]
+  ) => {
+    if (!map.isStyleLoaded()) return;
+
+    const fc: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: segs
+        .filter((s) => s.geojson && Array.isArray(s.geojson.coordinates))
+        .map((s) => ({
+          type: 'Feature',
+          properties: {
+            segment_id: s.segment_id,
+            road_id: s.road_id,
+            normalized_name: s.normalized_name,
+            road_class: s.road_class,
+            total_length_m: s.total_length_m,
+            approved_trips_count: s.approved_trips_count,
+          },
+          geometry: s.geojson,
+        })),
+    };
+
+    const existing = map.getSource('consolidated-roads') as
+      | maplibregl.GeoJSONSource
+      | undefined;
+    if (existing) {
+      existing.setData(fc);
+    } else {
+      map.addSource('consolidated-roads', {
+        type: 'geojson',
+        data: fc,
+      });
+
+      map.addLayer({
+        id: 'consolidated-roads-casing',
+        type: 'line',
+        source: 'consolidated-roads',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#0f172a',
+          'line-width': [
+            'match',
+            ['get', 'road_class'],
+            'troncal',
+            9,
+            'principal',
+            7,
+            'secundario',
+            6,
+            5,
+          ],
+          'line-opacity': 0.75,
+        },
+      });
+
+      map.addLayer({
+        id: 'consolidated-roads-line',
+        type: 'line',
+        source: 'consolidated-roads',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': [
+            'match',
+            ['get', 'road_class'],
+            'troncal',
+            '#dc2626',
+            'principal',
+            '#ea580c',
+            'secundario',
+            '#2563eb',
+            '#10b981',
+          ],
+          'line-width': [
+            'match',
+            ['get', 'road_class'],
+            'troncal',
+            6,
+            'principal',
+            4.5,
+            'secundario',
+            3.5,
+            3,
+          ],
+        },
+      });
+
+      map.addLayer({
+        id: 'consolidated-roads-label',
+        type: 'symbol',
+        source: 'consolidated-roads',
+        layout: {
+          'symbol-placement': 'line',
+          'text-field': ['get', 'normalized_name'],
+          'text-size': 12,
+          'text-offset': [0, -0.8],
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#0f172a',
+          'text-halo-width': 2,
+        },
+      });
+
+      map.on('click', 'consolidated-roads-line', (e) => {
+        const feat = e.features?.[0];
+        if (!feat || !feat.properties) return;
+        const { normalized_name, road_class, total_length_m, approved_trips_count } =
+          feat.properties;
+        const classLabel =
+          ROAD_CLASS_LABELS[road_class as RoadClass] || String(road_class);
+
+        const popupNode = document.createElement('div');
+        popupNode.className = 'map-popup-box';
+        popupNode.innerHTML = `
+          <strong>${normalized_name}</strong>
+          <div>Jerarquía: <b>${classLabel}</b></div>
+          <div>Longitud: ${formatDistance(Number(total_length_m))}</div>
+          <div>Recorridos aprobados: <b>${approved_trips_count}</b></div>
+        `;
+
+        new maplibregl.Popup({ closeButton: true })
+          .setLngLat(e.lngLat)
+          .setDOMContent(popupNode)
+          .addTo(map);
+      });
     }
   };
 
@@ -109,7 +276,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
           'line-color': '#ffffff',
-          'line-width': 7,
+          'line-width': 6,
           'line-opacity': 0.8,
         },
       });
@@ -129,7 +296,8 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             '#f59e0b',
             '#6b7280',
           ],
-          'line-width': 4.5,
+          'line-width': 4,
+          'line-dasharray': [2, 1],
         },
       });
 
@@ -148,7 +316,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
         popupNode.innerHTML = `
-          <strong>${original_name}</strong>
+          <strong>Recorrido: ${original_name}</strong>
           <div>Estado: <b>${status === 'approved' ? 'Aprobado' : 'Pendiente'}</b></div>
           <div>Distancia: ${formatDistance(Number(distance_m))}</div>
         `;
@@ -267,7 +435,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 
     map.on('load', () => {
       if (mode === 'general') {
-        fetchViewportTrips(map);
+        fetchViewportData(map);
       } else {
         updateSingleLayer(map, singleRouteCoords);
       }
@@ -275,7 +443,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 
     map.on('moveend', () => {
       if (mode === 'general') {
-        fetchViewportTrips(map);
+        fetchViewportData(map);
       }
     });
 
@@ -291,11 +459,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     if (mode === 'general') {
-      fetchViewportTrips(map);
+      fetchViewportData(map);
     } else {
       updateSingleLayer(map, singleRouteCoords);
     }
-  }, [showApproved, showPending, singleRouteCoords]);
+  }, [showConsolidatedRoads, showApproved, showPending, singleRouteCoords]);
 
   return (
     <div className="admin-map-wrapper" style={{ height }}>
@@ -308,11 +476,13 @@ export const AdminMap: React.FC<AdminMapProps> = ({
           <label className="layer-check">
             <input
               type="checkbox"
-              checked={showApproved}
-              onChange={(e) => setShowApproved(e.target.checked)}
+              checked={showConsolidatedRoads}
+              onChange={(e) => setShowConsolidatedRoads(e.target.checked)}
             />
-            <span className="legend-dot approved" />
-            <span>Recorridos aprobados</span>
+            <span className="legend-dot consolidated" />
+            <span>
+              <strong>Red Consolidada de Caminos</strong> ({visibleRoadsCount} tramos)
+            </span>
           </label>
           <label className="layer-check">
             <input
@@ -323,10 +493,19 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             <span className="legend-dot pending" />
             <span>Recorridos pendientes de revisión</span>
           </label>
+          <label className="layer-check">
+            <input
+              type="checkbox"
+              checked={showApproved}
+              onChange={(e) => setShowApproved(e.target.checked)}
+            />
+            <span className="legend-dot approved" />
+            <span>Trazas individuales aprobadas</span>
+          </label>
           <div className="layer-meta">
             {loadingBbox
               ? 'Consultando área visible...'
-              : `${visibleCount} recorrido(s) en pantalla`}
+              : `${visibleRoadsCount} tramo(s) consolidados • ${visibleCount} recorrido(s)`}
           </div>
         </div>
       )}
