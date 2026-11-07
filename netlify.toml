@@ -1,9 +1,20 @@
+# Configuración por defecto de Netlify para la App Móvil / PWA de Vecinos (apps/mobile)
+# Para el Panel de Administración (apps/admin), en Netlify podés crear un segundo sitio
+# apuntando al mismo repositorio con Base directory: apps/admin
 [build]
-  base = "apps/admin"
-  command = "npm run build"
+  base = "apps/mobile"
+  command = "npm install && npm run build"
   publish = "dist"
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), camera=(self)"
