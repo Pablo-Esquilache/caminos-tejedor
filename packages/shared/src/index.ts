@@ -87,3 +87,71 @@ export interface ClaimCategory {
   is_active: boolean;
   sort_order: number;
 }
+
+export interface ClaimSummary {
+  id: string;
+  title: string;
+  description: string | null;
+  category_id: string;
+  category_name: string;
+  category_icon: string | null;
+  status: ClaimStatus;
+  priority: ClaimPriority;
+  lat: number;
+  lon: number;
+  thumb_path: string | null;
+  photos_count: number;
+  latest_reply?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClaimPhotoItem {
+  id: string;
+  storage_path: string;
+  thumb_path: string | null;
+  created_at: string;
+}
+
+export interface ClaimHistoryItem {
+  id: string;
+  action: string;
+  old_status: ClaimStatus | null;
+  new_status: ClaimStatus | null;
+  old_priority: ClaimPriority | null;
+  new_priority: ClaimPriority | null;
+  message: string | null;
+  created_at: string;
+}
+
+export interface ClaimDetail {
+  id: string;
+  title: string;
+  description: string | null;
+  category_id: string;
+  category_name: string;
+  category_icon: string | null;
+  status: ClaimStatus;
+  priority: ClaimPriority;
+  lat: number;
+  lon: number;
+  created_at: string;
+  updated_at: string;
+  user_name?: string | null;
+  user_email?: string | null;
+  photos: ClaimPhotoItem[];
+  history: ClaimHistoryItem[];
+}
+
+export interface NotificationItem {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  claim_id: string | null;
+  is_read: boolean;
+  email_sent_at: string | null;
+  email_error: string | null;
+  created_at: string;
+}
