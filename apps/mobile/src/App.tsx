@@ -15,13 +15,13 @@ import {
   ChevronRight,
   ArrowLeft,
   Compass,
-  AlertTriangle, Map as MapIcon,
+  AlertTriangle, Map as MapIcon, Bell, MessageSquareWarning,
 } from 'lucide-react';
 import {
   TRIP_STATUS_USER_LABELS,
   type RawGpsPoint,
   type TripStatus,
-  type TripSummary,
+  type TripSummary, type NotificationItem,
 } from '@shared';
 import { supabase } from './lib/supabase';
 import {
@@ -35,7 +35,7 @@ import {
 import {
   clearActiveRecordingSession,
   getActiveRecordingSession,
-  listOutboxTrips,
+  listOutboxTrips, listOutboxClaims,
   removeTripFromOutbox,
   saveActiveRecordingSession,
   saveTripToOutbox,
@@ -44,6 +44,8 @@ import {
 } from './lib/localDb';
 import { RouteMap } from './components/RouteMap';
 import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
+import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSection';
+import { NotificationsView } from './components/NotificationsView';
 
 const PAGE_SIZE = 20;
 const PERMISSION_EXPLAINED_KEY = 'caminos_tejedor_gps_explained_v1';
@@ -61,7 +63,11 @@ export const App: React.FC = () => {
   const [loginBusy, setLoginBusy] = useState(false);
 
   // Navegación principal
-  const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map' | 'claims' | 'notifications'>('record');
+  const [claimIdToOpen, setClaimIdToOpen] = useState<string | null>(null);
+  const [outboxClaimsCount, setOutboxClaimsCount] = useState(0);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
 
   // Estado de red y cola offline (outbox)
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -154,7 +160,9 @@ export const App: React.FC = () => {
     });
 
     refreshOutbox();
+    refreshOutbox();
     loadMyTrips(0, true);
+    loadNotifications();
   }, [session?.user?.id]);
 
   // 2. Escuchar estado de conexión (Online / Offline) y sincronizar al volver la señal
@@ -196,7 +204,9 @@ export const App: React.FC = () => {
 
   const refreshOutbox = async () => {
     const items = await listOutboxTrips();
+    const claimItems = await listOutboxClaims();
     setOutboxItems(items);
+    setOutboxClaimsCount(claimItems.length);
     return items;
   };
 
@@ -229,7 +239,7 @@ export const App: React.FC = () => {
   const syncPendingOutbox = async () => {
     if (!navigator.onLine || syncingOutbox) return;
     const items = await listOutboxTrips();
-    if (items.length === 0) return;
+    if (items.length === 0 && (await listOutboxClaims()).length === 0) return;
 
     setSyncingOutbox(true);
     let sentCount = 0;
@@ -238,13 +248,23 @@ export const App: React.FC = () => {
       if (ok) sentCount++;
     }
     await refreshOutbox();
+    if (session?.user?.id) {
+      const claimItems = await listOutboxClaims();
+      for (const cItem of claimItems) {
+        const ok = await syncSingleClaimOutboxItem(session.user.id, cItem);
+        if (ok) sentCount++;
+      }
+    }
+    await refreshOutbox();
     setSyncingOutbox(false);
 
     if (sentCount > 0) {
       setSyncBannerMsg(
         `Se sincronizaron ${sentCount} recorrido(s) guardado(s) en el dispositivo.`
       );
-      loadMyTrips(0, true);
+      refreshOutbox();
+    loadMyTrips(0, true);
+    loadNotifications();
       window.setTimeout(() => setSyncBannerMsg(null), 5000);
     }
   };
@@ -536,6 +556,43 @@ export const App: React.FC = () => {
     window.setTimeout(() => setSyncBannerMsg(null), 7000);
   };
 
+  const loadNotifications = async () => {
+    if (!session?.user) return;
+    setNotificationsLoading(true);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    if (!error && data) {
+      setNotifications(data as NotificationItem[]);
+    }
+    setNotificationsLoading(false);
+  };
+
+  const handleMarkOneRead = async (notifId: string, claimId: string | null) => {
+    await supabase.rpc('mark_notifications_read', {
+      p_notification_id: notifId,
+      p_mark_all: false,
+    });
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notifId ? { ...n, is_read: true } : n))
+    );
+    if (claimId) {
+      setClaimIdToOpen(claimId);
+      setActiveTab('claims');
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    await supabase.rpc('mark_notifications_read', {
+      p_notification_id: null,
+      p_mark_all: true,
+    });
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+  };
+
   // Cargar listado liviano de "Mis recorridos" (paginado de a 20, sin descargar trazas)
   const loadMyTrips = async (pageIndex: number, replace = false) => {
     if (!session?.user) return;
@@ -720,9 +777,27 @@ export const App: React.FC = () => {
           </div>
           <span className="user-email-sub">{session.user.email}</span>
         </div>
-        <button type="button" className="icon-btn" onClick={handleLogout} title="Cerrar sesión">
+        <div className="inline-btns">
+          <button
+            type="button"
+            className="icon-btn notif-top-btn"
+            onClick={() => {
+              loadNotifications();
+              setActiveTab('notifications');
+            }}
+            title="Avisos"
+          >
+            <Bell size={18} />
+            {notifications.filter((n) => !n.is_read).length > 0 && (
+              <span className="notif-badge">
+                {notifications.filter((n) => !n.is_read).length}
+              </span>
+            )}
+          </button>
+          <button type="button" className="icon-btn" onClick={handleLogout} title="Cerrar sesión">
           <LogOut size={18} />
         </button>
+        </div>
       </header>
 
       {/* Banner de Modo Sin Señal (Offline) y Cola de Envío */}
@@ -738,11 +813,11 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {outboxItems.length > 0 && (
+      {(outboxItems.length > 0 || outboxClaimsCount > 0) && (
         <div className="outbox-banner">
           <div>
             <strong>
-              {outboxItems.length} recorrido(s) guardado(s) en el teléfono esperando señal
+              {outboxItems.length + outboxClaimsCount} elemento(s) guardado(s) en el teléfono esperando señal
             </strong>
             <p>No se pierde ningún dato aunque cierres la aplicación.</p>
           </div>
@@ -1175,6 +1250,33 @@ export const App: React.FC = () => {
             <ConsolidatedRoadsMap />
           </div>
         )}
+        {activeTab === 'claims' && (
+          <div className="tab-pane">
+            <ClaimsSection
+              userId={session.user.id}
+              isOnline={isOnline}
+              onOutboxChange={refreshOutbox}
+              onNotifyToast={(msg) => {
+                setSyncBannerMsg(msg);
+                loadNotifications();
+                window.setTimeout(() => setSyncBannerMsg(null), 6500);
+              }}
+              initialClaimIdToOpen={claimIdToOpen}
+              onClearInitialClaimId={() => setClaimIdToOpen(null)}
+            />
+          </div>
+        )}
+        {activeTab === 'notifications' && (
+          <div className="tab-pane">
+            <NotificationsView
+              notifications={notifications}
+              loading={notificationsLoading}
+              onRefresh={loadNotifications}
+              onMarkOneRead={handleMarkOneRead}
+              onMarkAllRead={handleMarkAllRead}
+            />
+          </div>
+        )}
       </main>
 
       {/* Barra de Navegación Inferior */}
@@ -1205,6 +1307,32 @@ export const App: React.FC = () => {
         >
           <MapIcon size={20} />
           <span>Mapa</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'claims' ? 'nav-item active' : 'nav-item'}
+          onClick={() => setActiveTab('claims')}
+        >
+          <MessageSquareWarning size={20} />
+          <span>Reclamos</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'notifications' ? 'nav-item active' : 'nav-item'}
+          onClick={() => {
+            loadNotifications();
+            setActiveTab('notifications');
+          }}
+        >
+          <div className="nav-icon-wrap">
+            <Bell size={20} />
+            {notifications.filter((n) => !n.is_read).length > 0 && (
+              <span className="nav-unread-badge">
+                {notifications.filter((n) => !n.is_read).length}
+              </span>
+            )}
+          </div>
+          <span>Avisos</span>
         </button>
       </nav>
     </div>

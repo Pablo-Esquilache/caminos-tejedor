@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { CARLOS_TEJEDOR_CENTER, ROAD_CLASS_LABELS, type RoadClass } from '@shared';
+import {
+  CARLOS_TEJEDOR_CENTER,
+  CLAIM_PRIORITY_LABELS,
+  CLAIM_STATUS_LABELS,
+  ROAD_CLASS_LABELS,
+  type ClaimPriority,
+  type ClaimStatus,
+  type RoadClass,
+} from '@shared';
 import { maptilerApiKey, supabase } from '../lib/supabase';
 import { formatDistance } from '../lib/format';
 
@@ -31,27 +39,46 @@ interface MapRoadSegmentFeature {
   };
 }
 
+interface MapClaimPointFeature {
+  id: string;
+  title: string;
+  status: ClaimStatus;
+  priority: ClaimPriority;
+  category_id: string;
+  category_name: string;
+  category_icon: string | null;
+  lat: number;
+  lon: number;
+  created_at: string;
+}
+
 interface AdminMapProps {
   mode: 'general' | 'single';
   singleRouteCoords?: Array<[number, number]>;
+  singlePointCoords?: [number, number] | null;
   onSelectTripId?: (tripId: string) => void;
+  onSelectClaimId?: (claimId: string) => void;
   height?: string;
 }
 
 export const AdminMap: React.FC<AdminMapProps> = ({
   mode,
   singleRouteCoords = [],
+  singlePointCoords = null,
   onSelectTripId,
+  onSelectClaimId,
   height = '600px',
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
   const [showConsolidatedRoads, setShowConsolidatedRoads] = useState(true);
+  const [showClaimsLayer, setShowClaimsLayer] = useState(true);
   const [showApproved, setShowApproved] = useState(false);
   const [showPending, setShowPending] = useState(true);
   const [visibleCount, setVisibleCount] = useState(0);
   const [visibleRoadsCount, setVisibleRoadsCount] = useState(0);
+  const [visibleClaimsCount, setVisibleClaimsCount] = useState(0);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
   const getStyleUrl = (s: 'hybrid' | 'streets') => {
@@ -83,7 +110,27 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       updateConsolidatedRoadsLayer(map, []);
     }
 
-    // 2. Cargar Recorridos individuales (aprobados / pendientes)
+    // 2. Cargar Reclamos Georreferenciados con Clustering por Bounding Box
+    if (showClaimsLayer) {
+      const { data: claimData } = await supabase.rpc('get_admin_map_claims', {
+        p_min_lon: bounds.getWest(),
+        p_min_lat: bounds.getSouth(),
+        p_max_lon: bounds.getEast(),
+        p_max_lat: bounds.getNorth(),
+        p_status: null,
+        p_category_id: null,
+      });
+      if (Array.isArray(claimData)) {
+        const claims = claimData as MapClaimPointFeature[];
+        setVisibleClaimsCount(claims.length);
+        updateClaimsClusterLayer(map, claims);
+      }
+    } else {
+      setVisibleClaimsCount(0);
+      updateClaimsClusterLayer(map, []);
+    }
+
+    // 3. Cargar Recorridos individuales (aprobados / pendientes)
     const statuses: string[] = [];
     if (showApproved) statuses.push('approved');
     if (showPending) statuses.push('pending');
@@ -241,6 +288,184 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     }
   };
 
+  const updateClaimsClusterLayer = (
+    map: maplibregl.Map,
+    claims: MapClaimPointFeature[]
+  ) => {
+    if (!map.isStyleLoaded()) return;
+
+    const fc: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: claims.map((c) => ({
+        type: 'Feature',
+        properties: {
+          id: c.id,
+          title: c.title,
+          status: c.status,
+          priority: c.priority,
+          category_name: c.category_name,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [c.lon, c.lat],
+        },
+      })),
+    };
+
+    const existing = map.getSource('admin-claims') as
+      | maplibregl.GeoJSONSource
+      | undefined;
+    if (existing) {
+      existing.setData(fc);
+    } else {
+      map.addSource('admin-claims', {
+        type: 'geojson',
+        data: fc,
+        cluster: true,
+        clusterMaxZoom: 14,
+        clusterRadius: 45,
+      });
+
+      // Círculos de clusters de reclamos cercanos
+      map.addLayer({
+        id: 'admin-claims-clusters',
+        type: 'circle',
+        source: 'admin-claims',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': [
+            'step',
+            ['get', 'point_count'],
+            '#dc2626',
+            5,
+            '#b91c1c',
+            15,
+            '#7f1d1d',
+          ],
+          'circle-radius': ['step', ['get', 'point_count'], 18, 5, 22, 15, 26],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      // Cantidad dentro de cada cluster
+      map.addLayer({
+        id: 'admin-claims-cluster-count',
+        type: 'symbol',
+        source: 'admin-claims',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': '{point_count_abbreviated}',
+          'text-size': 12,
+        },
+        paint: {
+          'text-color': '#ffffff',
+        },
+      });
+
+      // Marcadores individuales de reclamos cuando no están agrupados
+      map.addLayer({
+        id: 'admin-claims-unclustered',
+        type: 'circle',
+        source: 'admin-claims',
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-color': [
+            'match',
+            ['get', 'status'],
+            'solved',
+            '#16a34a',
+            'in_progress',
+            '#ea580c',
+            'evaluating',
+            '#d97706',
+            'dismissed',
+            '#6b7280',
+            '#dc2626',
+          ],
+          'circle-radius': [
+            'match',
+            ['get', 'priority'],
+            'high',
+            10,
+            'medium',
+            8,
+            7,
+          ],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      map.addLayer({
+        id: 'admin-claims-label',
+        type: 'symbol',
+        source: 'admin-claims',
+        filter: ['!', ['has', 'point_count']],
+        layout: {
+          'text-field': ['get', 'category_name'],
+          'text-size': 11,
+          'text-offset': [0, 1.3],
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#0f172a',
+          'text-halo-width': 1.8,
+        },
+      });
+
+      // Al hacer clic en un cluster, hacer zoom para expandir
+      map.on('click', 'admin-claims-clusters', async (e) => {
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: ['admin-claims-clusters'],
+        });
+        const clusterId = features[0]?.properties?.cluster_id;
+        const source = map.getSource('admin-claims') as maplibregl.GeoJSONSource;
+        if (clusterId !== undefined && source) {
+          const zoom = await source.getClusterExpansionZoom(clusterId);
+          const geom = features[0].geometry as GeoJSON.Point;
+          map.easeTo({
+            center: geom.coordinates as [number, number],
+            zoom,
+          });
+        }
+      });
+
+      // Al hacer clic en un reclamo individual, mostrar popup y botón para abrir detalle
+      map.on('click', 'admin-claims-unclustered', (e) => {
+        const feat = e.features?.[0];
+        if (!feat || !feat.properties) return;
+        const { id, title, status, priority, category_name } = feat.properties;
+
+        const statusLabel =
+          CLAIM_STATUS_LABELS[status as ClaimStatus] || String(status);
+        const prioLabel =
+          CLAIM_PRIORITY_LABELS[priority as ClaimPriority] || String(priority);
+
+        const popupNode = document.createElement('div');
+        popupNode.className = 'map-popup-box';
+        popupNode.innerHTML = `
+          <strong>Reclamo: ${title}</strong>
+          <div>Categoría: <b>${category_name}</b></div>
+          <div>Estado: <b>${statusLabel}</b> • Prioridad: <b>${prioLabel}</b></div>
+        `;
+
+        if (onSelectClaimId) {
+          const btn = document.createElement('button');
+          btn.className = 'popup-open-btn';
+          btn.textContent = 'Gestionar este reclamo';
+          btn.onclick = () => onSelectClaimId(String(id));
+          popupNode.appendChild(btn);
+        }
+
+        new maplibregl.Popup({ closeButton: true })
+          .setLngLat(e.lngLat)
+          .setDOMContent(popupNode)
+          .addTo(map);
+      });
+    }
+  };
+
   const updateGeneralLayers = (map: maplibregl.Map, items: MapTripFeature[]) => {
     if (!map.isStyleLoaded()) return;
 
@@ -336,7 +561,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     }
   };
 
-  const updateSingleLayer = (map: maplibregl.Map, coords: Array<[number, number]>) => {
+  const updateSingleLayer = (
+    map: maplibregl.Map,
+    coords: Array<[number, number]>,
+    pointCoords: [number, number] | null
+  ) => {
     if (!map.isStyleLoaded()) return;
 
     const lineFc: GeoJSON.FeatureCollection = {
@@ -369,7 +598,15 @@ export const AdminMap: React.FC<AdminMapProps> = ({
                 geometry: { type: 'Point', coordinates: coords[coords.length - 1] },
               },
             ]
-          : [],
+          : pointCoords
+            ? [
+                {
+                  type: 'Feature',
+                  properties: { role: 'end' },
+                  geometry: { type: 'Point', coordinates: pointCoords },
+                },
+              ]
+            : [],
     };
 
     const src = map.getSource('single-trip') as maplibregl.GeoJSONSource | undefined;
@@ -403,7 +640,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         type: 'circle',
         source: 'single-trip-pts',
         paint: {
-          'circle-radius': 7,
+          'circle-radius': 8,
           'circle-color': ['match', ['get', 'role'], 'start', '#16a34a', '#dc2626'],
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
@@ -417,6 +654,8 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         new maplibregl.LngLatBounds(coords[0], coords[0])
       );
       map.fitBounds(bounds, { padding: 55, maxZoom: 15, duration: 400 });
+    } else if (pointCoords) {
+      map.easeTo({ center: pointCoords, zoom: 14, duration: 400 });
     }
   };
 
@@ -437,7 +676,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       if (mode === 'general') {
         fetchViewportData(map);
       } else {
-        updateSingleLayer(map, singleRouteCoords);
+        updateSingleLayer(map, singleRouteCoords, singlePointCoords);
       }
     });
 
@@ -461,9 +700,16 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     if (mode === 'general') {
       fetchViewportData(map);
     } else {
-      updateSingleLayer(map, singleRouteCoords);
+      updateSingleLayer(map, singleRouteCoords, singlePointCoords);
     }
-  }, [showConsolidatedRoads, showApproved, showPending, singleRouteCoords]);
+  }, [
+    showConsolidatedRoads,
+    showClaimsLayer,
+    showApproved,
+    showPending,
+    singleRouteCoords,
+    singlePointCoords,
+  ]);
 
   return (
     <div className="admin-map-wrapper" style={{ height }}>
@@ -487,6 +733,17 @@ export const AdminMap: React.FC<AdminMapProps> = ({
           <label className="layer-check">
             <input
               type="checkbox"
+              checked={showClaimsLayer}
+              onChange={(e) => setShowClaimsLayer(e.target.checked)}
+            />
+            <span className="legend-dot claim-dot" />
+            <span>
+              <strong>Reclamos Viales (Cluster)</strong> ({visibleClaimsCount} en vista)
+            </span>
+          </label>
+          <label className="layer-check">
+            <input
+              type="checkbox"
               checked={showPending}
               onChange={(e) => setShowPending(e.target.checked)}
             />
@@ -505,7 +762,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
           <div className="layer-meta">
             {loadingBbox
               ? 'Consultando área visible...'
-              : `${visibleRoadsCount} tramo(s) consolidados • ${visibleCount} recorrido(s)`}
+              : `${visibleRoadsCount} tramo(s) • ${visibleClaimsCount} reclamo(s) • ${visibleCount} recorrido(s)`}
           </div>
         </div>
       )}

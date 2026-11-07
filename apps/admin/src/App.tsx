@@ -32,6 +32,7 @@ import {
 import { supabase } from './lib/supabase';
 import { formatDateTime, formatDistance, formatDuration } from './lib/format';
 import { AdminMap } from './components/AdminMap';
+import { AdminClaimsSection } from './components/AdminClaimsSection';
 
 type AdminSection =
   | 'dashboard'
@@ -126,6 +127,7 @@ export const App: React.FC = () => {
 
   // Navegación
   const [section, setSection] = useState<AdminSection>('dashboard');
+  const [selectedClaimIdFromMap, setSelectedClaimIdFromMap] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   // Portada / Indicadores
@@ -774,6 +776,10 @@ export const App: React.FC = () => {
                 mode="general"
                 height="440px"
                 onSelectTripId={(id) => openTripDetail(id)}
+                onSelectClaimId={(id) => {
+                  setSelectedClaimIdFromMap(id);
+                  setSection('claims');
+                }}
               />
             </div>
           </div>
@@ -794,6 +800,10 @@ export const App: React.FC = () => {
               mode="general"
               height="calc(100dvh - 150px)"
               onSelectTripId={(id) => openTripDetail(id)}
+              onSelectClaimId={(id) => {
+                setSelectedClaimIdFromMap(id);
+                setSection('claims');
+              }}
             />
           </div>
         )}
@@ -1372,6 +1382,18 @@ export const App: React.FC = () => {
 
         {/* SECCIÓN 5: RECLAMOS (Se completa en Fase 5) */}
         {section === 'claims' && (
+          <div className="admin-page">
+            <AdminClaimsSection
+              selectedClaimIdFromMap={selectedClaimIdFromMap}
+              onClearSelectedClaimFromMap={() => setSelectedClaimIdFromMap(null)}
+              onFeedback={(msg) => {
+                showToast(msg);
+                loadDashboardSummary();
+              }}
+            />
+          </div>
+        )}
+        {false && (
           <div className="admin-page">
             <div className="panel-card empty-module">
               <AlertOctagon size={38} />
