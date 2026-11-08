@@ -23,6 +23,7 @@ import {
 } from '@shared';
 import { supabase } from '../lib/supabase';
 import { AdminMap } from './AdminMap';
+import { AdminCreateClaimModal } from './AdminCreateClaimModal';
 
 const PAGE_SIZE = 20;
 
@@ -59,6 +60,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
   onFeedback,
 }) => {
   const [subTab, setSubTab] = useState<'inbox' | 'categories' | 'weekly'>('inbox');
+  const [showCreateClaimModal, setShowCreateClaimModal] = useState(false);
 
   // Filtros de Bandeja de Reclamos
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -302,7 +304,25 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
         >
           <Mail size={16} /> Avisos y Resumen Semanal
         </button>
+        <button
+          type="button"
+          className="btn-approve"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setShowCreateClaimModal(true)}
+        >
+          <Plus size={16} /> Generar reclamo
+        </button>
       </div>
+      {showCreateClaimModal && (
+        <AdminCreateClaimModal
+          categories={categories}
+          onClose={() => setShowCreateClaimModal(false)}
+          onClaimCreated={(msg) => {
+            onFeedback(msg);
+            loadClaims(0);
+          }}
+        />
+      )}
 
       {/* SUB-PESTAÑA 1: BANDEJA DE RECLAMOS Y DETALLE */}
       {subTab === 'inbox' && (

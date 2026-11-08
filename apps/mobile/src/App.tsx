@@ -711,11 +711,6 @@ export const App: React.FC = () => {
           <div className="top-bar-title">
             <Navigation size={18} />
             <span>Caminos Tejedor</span>
-            {isAdmin && (
-              <span className="admin-pill" title="Tus recorridos se aprueban automáticamente">
-                <ShieldCheck size={13} /> Admin
-              </span>
-            )}
           </div>
           <span className="user-email-sub">{session.user.email}</span>
         </div>
@@ -852,36 +847,6 @@ export const App: React.FC = () => {
                 <p className="muted-text">
                   Iniciá la grabación al entrar al camino rural. Cada punto GPS se guarda en el acto en la memoria de tu teléfono.
                 </p>
-
-                <div className="mode-selector">
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={useSimulator}
-                      onChange={(e) => setUseSimulator(e.target.checked)}
-                    />
-                    <span>
-                      Usar <strong>Simulador de Campo (Carlos Tejedor)</strong> (ideal para probar ahora desde tu casa o PC)
-                    </span>
-                  </label>
-
-                  {useSimulator && (
-                    <div className="sim-route-picker">
-                      <label>Elegí qué camino de Carlos Tejedor simular:</label>
-                      <select
-                        value={selectedSampleIdx}
-                        onChange={(e) => setSelectedSampleIdx(Number(e.target.value))}
-                      >
-                        {SAMPLE_TEJEDOR_ROUTES.map((r, idx) => (
-                          <option key={r.name} value={idx}>
-                            {r.name}
-                          </option>
-                        ))}
-                      </select>
-                      <small>{SAMPLE_TEJEDOR_ROUTES[selectedSampleIdx]?.description}</small>
-                    </div>
-                  )}
-                </div>
 
                 <RouteMap coordinates={[]} height="230px" />
 

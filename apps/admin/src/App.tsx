@@ -34,6 +34,7 @@ import { formatDateTime, formatDistance, formatDuration } from './lib/format';
 import { AdminMap } from './components/AdminMap';
 import { AdminClaimsSection } from './components/AdminClaimsSection';
 import { AdminStatsSection } from './components/AdminStatsSection';
+import { AdminFieldRecorderModal } from './components/AdminFieldRecorderModal';
 
 type AdminSection =
   | 'dashboard'
@@ -130,6 +131,7 @@ export const App: React.FC = () => {
   const [section, setSection] = useState<AdminSection>('dashboard');
   const [selectedClaimIdFromMap, setSelectedClaimIdFromMap] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showRecorderModal, setShowRecorderModal] = useState(false);
 
   // Portada / Indicadores
   const [summary, setSummary] = useState<DashboardSummary>({
@@ -697,6 +699,17 @@ export const App: React.FC = () => {
 
       {/* Área Principal */}
       <div className="admin-main">
+        {showRecorderModal && (
+          <AdminFieldRecorderModal
+            onClose={() => setShowRecorderModal(false)}
+            onTripCreated={(msg) => {
+              showToast(msg);
+              loadDashboardSummary();
+              loadTrips(tripsPage);
+              loadRoads(roadsPage);
+            }}
+          />
+        )}
         {toastMsg && (
           <div className="admin-toast">
             <CheckCircle2 size={18} />
@@ -712,17 +725,26 @@ export const App: React.FC = () => {
                 <h1>Resumen Operativo — Partido de Carlos Tejedor</h1>
                 <p>Estado actual de relevamiento, validación y red consolidada de caminos</p>
               </div>
-              <button
-                type="button"
-                className="btn-outline"
-                onClick={() => {
-                  loadDashboardSummary();
-                  loadTrips(tripsPage);
-                  loadRoads(roadsPage);
-                }}
-              >
-                <RefreshCw size={15} /> Actualizar indicadores
-              </button>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  className="btn-approve"
+                  onClick={() => setShowRecorderModal(true)}
+                >
+                  <Navigation size={15} /> Grabar / Simular Recorrido
+                </button>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  onClick={() => {
+                    loadDashboardSummary();
+                    loadTrips(tripsPage);
+                    loadRoads(roadsPage);
+                  }}
+                >
+                  <RefreshCw size={15} /> Actualizar indicadores
+                </button>
+              </div>
             </div>
 
             <div className="kpi-grid">
@@ -796,6 +818,13 @@ export const App: React.FC = () => {
                   Muestra la Red Consolidada de Caminos (con grosor y color según intensidad de uso y etiquetas de nombre) más los recorridos pendientes.
                 </p>
               </div>
+              <button
+                type="button"
+                className="btn-approve"
+                onClick={() => setShowRecorderModal(true)}
+              >
+                <Navigation size={15} /> Grabar / Simular Recorrido
+              </button>
             </div>
             <AdminMap
               mode="general"
