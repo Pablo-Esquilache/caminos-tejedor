@@ -258,9 +258,14 @@ export const App: React.FC = () => {
         `Se sincronizaron ${sentCount} recorrido(s) guardado(s) en el dispositivo.`
       );
       refreshOutbox();
-    loadMyTrips(0, true);
-    loadNotifications();
+      loadMyTrips(0, true);
+      loadNotifications();
       window.setTimeout(() => setSyncBannerMsg(null), 5000);
+    } else if (items.length > 0) {
+      const freshItems = await listOutboxTrips();
+      const firstErr = freshItems.find((i) => i.last_error)?.last_error || 'Error al conectar con el servidor';
+      setSyncBannerMsg(`No se pudo sincronizar: ${firstErr}`);
+      window.setTimeout(() => setSyncBannerMsg(null), 8000);
     }
   };
 
@@ -757,16 +762,43 @@ export const App: React.FC = () => {
               {outboxItems.length + outboxClaimsCount} elemento(s) guardado(s) en el teléfono esperando señal
             </strong>
             <p>No se pierde ningún dato aunque cierres la aplicación.</p>
+            {outboxItems.map(
+              (item) =>
+                item.last_error && (
+                  <p key={item.id} style={{ color: '#dc2626', fontSize: '13px', marginTop: '6px', fontWeight: 600 }}>
+                    ⚠️ {item.original_name} ({item.raw_points?.length || 0} pts): {item.last_error}
+                  </p>
+                )
+            )}
           </div>
-          <button
-            type="button"
-            className="btn-small"
-            disabled={!isOnline || syncingOutbox}
-            onClick={syncPendingOutbox}
-          >
-            <RefreshCw size={14} className={syncingOutbox ? 'spin' : ''} />
-            {syncingOutbox ? 'Enviando...' : 'Reintentar'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn-small"
+              disabled={!isOnline || syncingOutbox}
+              onClick={syncPendingOutbox}
+            >
+              <RefreshCw size={14} className={syncingOutbox ? 'spin' : ''} />
+              {syncingOutbox ? 'Enviando...' : 'Reintentar'}
+            </button>
+            {outboxItems.some((i) => i.status === 'error' || i.last_error) && (
+              <button
+                type="button"
+                className="btn-small"
+                style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' }}
+                onClick={async () => {
+                  if (window.confirm('¿Deseás descartar los recorridos con error guardados en el teléfono?')) {
+                    for (const i of outboxItems) {
+                      await removeTripFromOutbox(i.id);
+                    }
+                    await refreshOutbox();
+                  }
+                }}
+              >
+                Descartar
+              </button>
+            )}
+          </div>
         </div>
       )}
 
