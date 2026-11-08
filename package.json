@@ -8,6 +8,7 @@
     "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
     "db:test": "node --env-file=.env scripts/db-test.mjs",
     "db:check": "node --env-file=.env scripts/check-keys.mjs",
+    "email:send": "node --env-file=.env scripts/send-pending-emails.mjs",
     "dev:admin": "npm --prefix apps/admin run dev",
     "build:admin": "npm --prefix apps/admin run build",
     "dev:mobile": "npm --prefix apps/mobile run start"

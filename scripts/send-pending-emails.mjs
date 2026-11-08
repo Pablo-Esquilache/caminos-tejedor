@@ -11,7 +11,7 @@ const { Client } = pg;
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   const brevoApiKey = process.env.BREVO_API_KEY;
-  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'pabloesquilache@gmail.com';
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'caminostejedor@gmail.com';
   const senderName = process.env.BREVO_SENDER_NAME || 'Caminos Rurales Carlos Tejedor';
 
   if (!databaseUrl) {
@@ -26,6 +26,23 @@ async function main() {
 
   await client.connect();
   try {
+    // Si tenemos BREVO_API_KEY en el entorno, sincronizarla en public.private_secrets
+    // para que el trigger automático pg_net de Supabase también pueda despachar en tiempo real.
+    if (brevoApiKey) {
+      await client.query(
+        `
+        INSERT INTO public.private_secrets (key, value, updated_at)
+        VALUES ('brevo_api_key', $1, now()),
+               ('brevo_sender_email', $2, now()),
+               ('brevo_sender_name', $3, now())
+        ON CONFLICT (key) DO UPDATE
+          SET value = EXCLUDED.value,
+              updated_at = now();
+        `,
+        [brevoApiKey, senderEmail, senderName]
+      ).catch(() => {});
+    }
+
     const pendingRes = await client.query(`
       SELECT
         n.id,
@@ -39,6 +56,7 @@ async function main() {
       JOIN public.profiles p ON p.id = n.user_id
       WHERE n.email_sent_at IS NULL
         AND p.email IS NOT NULL
+        AND p.email NOT LIKE '%@tejedor.test'
       ORDER BY n.created_at ASC
       LIMIT 30;
     `);
