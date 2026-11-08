@@ -4,6 +4,7 @@
   "private": true,
   "description": "Sistema de relevamiento, consolidación y gestión de reclamos de caminos rurales de Carlos Tejedor",
   "scripts": {
+    "build": "node scripts/build-netlify.mjs",
     "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
     "db:test": "node --env-file=.env scripts/db-test.mjs",
     "db:check": "node --env-file=.env scripts/check-keys.mjs",

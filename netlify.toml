@@ -1,6 +1,17 @@
-# Cada aplicación tiene su propio netlify.toml dentro de su carpeta:
-# - Para la App Móvil / Vecinos: configurá Base directory = apps/mobile
-# - Para el Panel Admin: configurá Base directory = apps/admin
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/admin"
+  to = "/admin/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin/*"
+  to = "/admin/index.html"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
