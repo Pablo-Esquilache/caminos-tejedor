@@ -12,6 +12,7 @@ import {
   Send,
   Tag,
   UserCheck,
+  X,
 } from 'lucide-react';
 import {
   CLAIM_PRIORITY_LABELS,
@@ -52,12 +53,14 @@ interface AdminClaimsSectionProps {
   selectedClaimIdFromMap?: string | null;
   onClearSelectedClaimFromMap?: () => void;
   onFeedback: (msg: string) => void;
+  onClaimsUpdated?: () => void;
 }
 
 export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
   selectedClaimIdFromMap,
   onClearSelectedClaimFromMap,
   onFeedback,
+  onClaimsUpdated,
 }) => {
   const [subTab, setSubTab] = useState<'inbox' | 'categories' | 'weekly'>('inbox');
   const [showCreateClaimModal, setShowCreateClaimModal] = useState(false);
@@ -161,6 +164,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
       }
     }
     setLoadingClaims(false);
+    onClaimsUpdated?.();
   };
 
   const openClaimDetail = async (claimId: string) => {
@@ -213,8 +217,11 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
       onFeedback(
         `Reclamo actualizado a "${CLAIM_STATUS_LABELS[newStatus]}". Se envió notificación al vecino.`
       );
-      await openClaimDetail(selectedDetail.id);
+      setSelectedDetail(null);
+      setReplyMessage('');
+      onClearSelectedClaimFromMap?.();
       await loadClaims(page);
+      onClaimsUpdated?.();
     }
   };
 
@@ -389,7 +396,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
             </button>
           </div>
 
-          <div className="trips-split-layout">
+          <div className={`trips-split-layout ${selectedDetail || loadingDetail ? 'has-detail' : 'full-width'}`}>
             {/* Tabla de Reclamos */}
             <div className="panel-card table-card">
               <table className="admin-table">
@@ -495,33 +502,38 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
             </div>
 
             {/* Panel Lateral de Detalle y Respuesta al Vecino */}
-            <div className="panel-card detail-inspector">
-              {!selectedDetail && !loadingDetail && (
-                <div className="inspector-empty">
-                  <MapPin size={32} />
-                  <p>
-                    Seleccioná un reclamo de la tabla o del mapa para ver su foto, ubicación GPS, historial y enviar respuesta al vecino.
-                  </p>
-                </div>
-              )}
+            {(selectedDetail || loadingDetail) && (
+              <div className="panel-card detail-inspector">
+                {loadingDetail && (
+                  <div className="inspector-empty">Cargando reclamo...</div>
+                )}
 
-              {loadingDetail && (
-                <div className="inspector-empty">Cargando reclamo...</div>
-              )}
-
-              {selectedDetail && !loadingDetail && (
-                <div className="inspector-content">
-                  <div className="inspector-header">
-                    <div>
-                      <span className="admin-cat-tag">
-                        {selectedDetail.category_name}
-                      </span>
-                      <h3>{selectedDetail.title}</h3>
+                {selectedDetail && !loadingDetail && (
+                  <div className="inspector-content">
+                    <div className="inspector-header">
+                      <div>
+                        <span className="admin-cat-tag">
+                          {selectedDetail.category_name}
+                        </span>
+                        <h3>{selectedDetail.title}</h3>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className={`claim-badge status-${selectedDetail.status}`}>
+                          {CLAIM_STATUS_LABELS[selectedDetail.status]}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-icon-close"
+                          title="Cerrar detalle"
+                          onClick={() => {
+                            setSelectedDetail(null);
+                            onClearSelectedClaimFromMap?.();
+                          }}
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
                     </div>
-                    <span className={`claim-badge status-${selectedDetail.status}`}>
-                      {CLAIM_STATUS_LABELS[selectedDetail.status]}
-                    </span>
-                  </div>
 
                   <div className="inspector-meta-grid">
                     <div>
@@ -658,6 +670,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
                 </div>
               )}
             </div>
+            )}
           </div>
         </>
       )}

@@ -133,6 +133,7 @@ export const App: React.FC = () => {
   const [selectedClaimIdFromMap, setSelectedClaimIdFromMap] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showRecorderModal, setShowRecorderModal] = useState(false);
+  const [newClaimsCount, setNewClaimsCount] = useState(0);
 
   // Portada / Indicadores
   const [summary, setSummary] = useState<DashboardSummary>({
@@ -244,6 +245,16 @@ export const App: React.FC = () => {
     setSelectedIds([]);
     loadTrips(0);
   }, [tripsFilterStatus, dateFrom, dateTo]);
+
+  const loadNewClaimsCount = async () => {
+    const { count, error } = await supabase
+      .from('claims')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'received');
+    if (!error && typeof count === 'number') {
+      setNewClaimsCount(count);
+    }
+  };
 
   const loadDashboardSummary = async () => {
     const { data, error } = await supabase.rpc('get_admin_dashboard_summary');

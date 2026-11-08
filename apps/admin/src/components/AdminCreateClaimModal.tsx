@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Camera, MapPin, Plus, Sparkles, X } from 'lucide-react';
-import { CARLOS_TEJEDOR_CENTER, type ClaimCategory } from '@shared';
+import { CARLOS_TEJEDOR_CENTER, type ClaimCategory, type ClaimPriority } from '@shared';
 import {
   compressClaimPhoto,
   generateSimulatedClaimPhoto,
@@ -21,6 +21,7 @@ export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
 }) => {
   const activeCategories = categories.filter((c) => c.is_active);
   const [categoryId, setCategoryId] = useState<string>(activeCategories[0]?.id || '');
+  const [priority, setPriority] = useState<ClaimPriority>('medium');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [lat, setLat] = useState<number>(CARLOS_TEJEDOR_CENTER.latitude - 0.004);

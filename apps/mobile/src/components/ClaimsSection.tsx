@@ -292,10 +292,6 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
       sampleRoute.coords[Math.floor(Math.random() * sampleRoute.coords.length)];
     setLon(Number(pt[0].toFixed(6)));
     setLat(Number(pt[1].toFixed(6)));
-    if (!title.trim()) {
-      const cat = categories.find((c) => c.id === selectedCategoryId);
-      setTitle(`${cat?.name || 'Problema'} en ${sampleRoute.name}`);
-    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -560,7 +556,7 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
           <input
             type="text"
             required
-            placeholder="Ej.: Alcantarilla rota en Camino Real a Timote"
+            placeholder=""
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
