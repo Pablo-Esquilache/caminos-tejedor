@@ -55,12 +55,7 @@ export const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Login con email/contraseña (para administradores o pruebas)
-  const [showEmailLogin, setShowEmailLogin] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginBusy, setLoginBusy] = useState(false);
 
   // Navegación principal
   const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map' | 'claims' | 'notifications'>('record');
@@ -647,20 +642,6 @@ export const App: React.FC = () => {
     if (error) setLoginError(error.message);
   };
 
-  const handlePasswordLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError(null);
-    setLoginBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    setLoginBusy(false);
-    if (error) {
-      setLoginError('Correo o contraseña incorrectos.');
-    }
-  };
-
   const handleLogout = async () => {
     stopGpsWatchers();
     await supabase.auth.signOut();
@@ -713,45 +694,6 @@ export const App: React.FC = () => {
             Continuar con Google
           </button>
 
-          <div className="divider">
-            <span>o acceso administrativo</span>
-          </div>
-
-          {!showEmailLogin ? (
-            <button
-              type="button"
-              className="btn-secondary full-width"
-              onClick={() => setShowEmailLogin(true)}
-            >
-              Ingresar con correo y contraseña
-            </button>
-          ) : (
-            <form onSubmit={handlePasswordLogin} className="email-login-form">
-              <label>
-                Correo electrónico
-                <input
-                  type="email"
-                  required
-                  placeholder="ejemplo@correo.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </label>
-              <label>
-                Contraseña
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </label>
-              <button type="submit" className="btn-primary full-width" disabled={loginBusy}>
-                {loginBusy ? 'Ingresando...' : 'Iniciar sesión'}
-              </button>
-            </form>
-          )}
         </div>
       </div>
     );

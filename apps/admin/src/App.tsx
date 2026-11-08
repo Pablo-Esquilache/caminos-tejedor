@@ -1185,12 +1185,6 @@ export const App: React.FC = () => {
                     <Sliders size={18} style={{ verticalAlign: 'middle', marginRight: 6 }} />
                     Clasificación Jerárquica por Frecuencia de Uso
                   </h2>
-                  <p>
-                    Umbrales en <code>settings</code> (cantidad de recorridos aprobados). Propuesta actual por percentiles de distribución: Troncal (P90) ≥{' '}
-                    <b>{proposedPercentiles.p90_troncal}</b>, Principal (P70) ≥{' '}
-                    <b>{proposedPercentiles.p70_principal}</b>, Secundario (P40) ≥{' '}
-                    <b>{proposedPercentiles.p40_secundario}</b>.
-                  </p>
                 </div>
                 <button
                   type="button"
