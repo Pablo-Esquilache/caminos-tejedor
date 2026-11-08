@@ -7,7 +7,7 @@ BEGIN;
 
 DO $$
 DECLARE
-  v_admin_id uuid := '4349072b-58e1-4588-87c7-bc0be917f1f5';
+  v_admin_id uuid;
   v_user_id uuid := 'fb2ecc52-173c-4f9c-9a3c-6621621c2aad';
   v_trip_id uuid := '60000000-0000-4000-8000-000000000001';
   v_claim_id uuid := '60000000-0000-4000-8000-000000000002';
@@ -19,6 +19,7 @@ DECLARE
   v_sum_cat integer;
   v_total_claims integer;
 BEGIN
+  SELECT user_id INTO v_admin_id FROM public.admins LIMIT 1;
   -- 1. Preparar un camino consolidado de prueba y un reclamo sobre su traza
   SELECT id INTO v_cat_id FROM public.claim_categories WHERE is_active = true LIMIT 1;
 

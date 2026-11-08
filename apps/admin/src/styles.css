@@ -127,6 +127,11 @@ body {
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 50;
 }
 
 .sidebar-brand {

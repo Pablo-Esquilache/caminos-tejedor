@@ -7,7 +7,7 @@ BEGIN;
 
 DO $$
 DECLARE
-  v_admin_id uuid := '4349072b-58e1-4588-87c7-bc0be917f1f5';
+  v_admin_id uuid;
   v_user_id uuid := 'fb2ecc52-173c-4f9c-9a3c-6621621c2aad';
   v_claim_id uuid := '50000000-0000-4000-8000-000000000001';
   v_cat_id uuid;
@@ -16,6 +16,7 @@ DECLARE
   v_notif_count integer;
   v_weekly jsonb;
 BEGIN
+  SELECT user_id INTO v_admin_id FROM public.admins LIMIT 1;
   -- 1. Obtener una categoría activa inicial
   SELECT id INTO v_cat_id FROM public.claim_categories WHERE is_active = true LIMIT 1;
   IF v_cat_id IS NULL THEN

@@ -96,6 +96,7 @@ interface AdminRoadRow {
   id: string;
   normalized_name: string;
   road_class: RoadClass;
+  is_manual_class?: boolean;
   total_length_m: number;
   approved_trips_count: number;
   unique_users_count: number;
@@ -174,6 +175,7 @@ export const App: React.FC = () => {
   const [troncalMin, setTroncalMin] = useState(25);
   const [principalMin, setPrincipalMin] = useState(10);
   const [secundarioMin, setSecundarioMin] = useState(3);
+  const [classificationMode, setClassificationMode] = useState<'manual_thresholds' | 'auto_percentiles'>('manual_thresholds');
   const [proposedPercentiles, setProposedPercentiles] = useState<{
     p90_troncal: number;
     p70_principal: number;
@@ -289,6 +291,9 @@ export const App: React.FC = () => {
       }
       if (data.proposed_percentiles) {
         setProposedPercentiles(data.proposed_percentiles);
+      }
+      if (data.classification_mode) {
+        setClassificationMode(data.classification_mode);
       }
     }
     setRoadsLoading(false);
@@ -436,6 +441,39 @@ export const App: React.FC = () => {
       return;
     }
     showToast('Umbrales guardados y clasificación de caminos recalculada.');
+    await loadRoads(roadsPage);
+  };
+
+  const handleToggleClassificationMode = async (mode: 'manual_thresholds' | 'auto_percentiles') => {
+    setClassificationMode(mode);
+    const { error } = await supabase.rpc('set_road_classification_mode', { p_mode: mode });
+    if (error) {
+      alert(`Error al cambiar modo de clasificación: ${error.message}`);
+      return;
+    }
+    showToast(
+      mode === 'auto_percentiles'
+        ? 'Modo automático inteligente activado: la red se clasifica por distribución de uso.'
+        : 'Modo estándar activado: la red se clasifica por los umbrales mínimos definidos.'
+    );
+    await loadRoads(roadsPage);
+  };
+
+  const handleSetRoadClass = async (roadId: string, newClass: RoadClass, isManual: boolean) => {
+    const { error } = await supabase.rpc('set_road_class', {
+      p_road_id: roadId,
+      p_road_class: newClass,
+      p_is_manual: isManual,
+    });
+    if (error) {
+      alert(`Error al modificar categoría del camino: ${error.message}`);
+      return;
+    }
+    showToast(
+      isManual
+        ? `Jerarquía fijada manualmente como "${ROAD_CLASS_LABELS[newClass]}".`
+        : 'El camino volvió a clasificarse automáticamente.'
+    );
     await loadRoads(roadsPage);
   };
 
@@ -1228,51 +1266,85 @@ export const App: React.FC = () => {
                 </button>
               </div>
 
-              <form className="thresholds-form" onSubmit={handleApplyThresholds}>
-                <label>
-                  Troncal (mín. recorridos)
-                  <input
-                    type="number"
-                    min={1}
-                    value={troncalMin}
-                    onChange={(e) => setTroncalMin(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  Principal (mín. recorridos)
-                  <input
-                    type="number"
-                    min={1}
-                    value={principalMin}
-                    onChange={(e) => setPrincipalMin(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  Secundario (mín. recorridos)
-                  <input
-                    type="number"
-                    min={1}
-                    value={secundarioMin}
-                    onChange={(e) => setSecundarioMin(Number(e.target.value))}
-                  />
-                </label>
-                <div className="thresholds-btns">
+              {/* Selector de Modo de Clasificación */}
+              <div style={{ display: 'flex', gap: 12, marginBottom: 16, borderBottom: '1px solid #e2e8f0', paddingBottom: 12 }}>
+                <button
+                  type="button"
+                  className={classificationMode === 'manual_thresholds' ? 'btn-primary' : 'btn-outline'}
+                  onClick={() => handleToggleClassificationMode('manual_thresholds')}
+                >
+                  Modo por Umbrales Fijos (Personalizado)
+                </button>
+                <button
+                  type="button"
+                  className={classificationMode === 'auto_percentiles' ? 'btn-primary' : 'btn-outline'}
+                  onClick={() => handleToggleClassificationMode('auto_percentiles')}
+                >
+                  Modo Automático Inteligente (Por Tránsito Relativo)
+                </button>
+              </div>
+
+              {classificationMode === 'manual_thresholds' ? (
+                <form className="thresholds-form" onSubmit={handleApplyThresholds}>
+                  <label>
+                    Troncal (mín. recorridos)
+                    <input
+                      type="number"
+                      min={1}
+                      value={troncalMin}
+                      onChange={(e) => setTroncalMin(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    Principal (mín. recorridos)
+                    <input
+                      type="number"
+                      min={1}
+                      value={principalMin}
+                      onChange={(e) => setPrincipalMin(Number(e.target.value))}
+                    />
+                  </label>
+                  <label>
+                    Secundario (mín. recorridos)
+                    <input
+                      type="number"
+                      min={1}
+                      value={secundarioMin}
+                      onChange={(e) => setSecundarioMin(Number(e.target.value))}
+                    />
+                  </label>
+                  <div className="thresholds-btns">
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => {
+                        setTroncalMin(proposedPercentiles.p90_troncal);
+                        setPrincipalMin(proposedPercentiles.p70_principal);
+                        setSecundarioMin(proposedPercentiles.p40_secundario);
+                      }}
+                    >
+                      Cargar percentiles sugeridos
+                    </button>
+                    <button type="submit" className="btn-approve">
+                      Confirmar y Recalcular clasificación
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                  <p style={{ margin: 0, fontSize: '14px', color: '#334155', lineHeight: 1.6 }}>
+                    <strong>Clasificación automática activada:</strong> El sistema analiza el tránsito de todos los caminos y distribuye los niveles automáticamente sin que tengas que fijar números manuales. Los caminos con mayor cantidad de pasadas se clasifican como <b>Troncales</b>, el grupo siguiente como <b>Principales</b>, luego <b>Secundarios</b> y los accesos o de poco uso como <b>Vecinales</b>. Los caminos que fijes a mano se mantienen siempre con tu categoría elegida.
+                  </p>
                   <button
                     type="button"
-                    className="btn-outline"
-                    onClick={() => {
-                      setTroncalMin(proposedPercentiles.p90_troncal);
-                      setPrincipalMin(proposedPercentiles.p70_principal);
-                      setSecundarioMin(proposedPercentiles.p40_secundario);
-                    }}
+                    className="btn-approve"
+                    style={{ marginTop: 12 }}
+                    onClick={() => handleToggleClassificationMode('auto_percentiles')}
                   >
-                    Cargar percentiles sugeridos
-                  </button>
-                  <button type="submit" className="btn-approve">
-                    Confirmar y Recalcular clasificación
+                    <RefreshCw size={14} /> Recalcular distribución de tránsito ahora
                   </button>
                 </div>
-              </form>
+              )}
             </div>
 
             {/* Listado de Caminos Consolidados */}
@@ -1363,9 +1435,62 @@ export const App: React.FC = () => {
                             )}
                           </td>
                           <td>
-                            <span className={`road-class-badge class-${r.road_class}`}>
-                              {ROAD_CLASS_LABELS[r.road_class]}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <select
+                                  value={r.road_class}
+                                  onChange={(e) => handleSetRoadClass(r.id, e.target.value as RoadClass, true)}
+                                  style={{
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    padding: '4px 8px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #cbd5e1',
+                                    background: '#ffffff',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <option value="troncal">Troncal</option>
+                                  <option value="principal">Principal</option>
+                                  <option value="secundario">Secundario</option>
+                                  <option value="vecinal">Vecinal</option>
+                                </select>
+                                {r.is_manual_class && (
+                                  <span
+                                    title="Categoría fijada manualmente por el Municipio"
+                                    style={{
+                                      fontSize: '11px',
+                                      background: '#fef3c7',
+                                      color: '#92400e',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      fontWeight: 600,
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    Fijado Admin
+                                  </span>
+                                )}
+                              </div>
+                              {r.is_manual_class && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetRoadClass(r.id, r.road_class, false)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#0284c7',
+                                    fontSize: '11px',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    textAlign: 'left',
+                                    textDecoration: 'underline',
+                                  }}
+                                >
+                                  Restablecer a automático
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td>{formatDistance(Number(r.total_length_m))}</td>
                           <td>

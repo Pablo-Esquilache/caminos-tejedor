@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { Navigation, Pause, Play, ShieldCheck, Square, X } from 'lucide-react';
-import { CARLOS_TEJEDOR_CENTER, type RawGpsPoint } from '@shared';
+import { CARLOS_TEJEDOR_CENTER, type RawGpsPoint, type RoadClass, ROAD_CLASS_LABELS } from '@shared';
 import {
   DEFAULT_MAX_GPS_ACCURACY_M,
   SAMPLE_TEJEDOR_ROUTES,
@@ -31,6 +31,7 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
   const [lastResumedAt, setLastResumedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [roadName, setRoadName] = useState('');
+  const [roadClass, setRoadClass] = useState<RoadClass>('troncal');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -253,6 +254,7 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
       p_distance_m: Math.round(distanceMeters),
       p_duration_s: durationSec,
       p_raw_points: points,
+      p_initial_road_class: roadClass,
     });
 
     setSubmitting(false);
@@ -262,7 +264,7 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
     }
 
     onTripCreated(
-      `Recorrido "${roadName.trim()}" (${formatDistance(distanceMeters)}) registrado, aprobado automáticamente y consolidado en la red vial.`
+      `Recorrido "${roadName.trim()}" (${formatDistance(distanceMeters)}) clasificado como ${ROAD_CLASS_LABELS[roadClass]}, aprobado automáticamente y consolidado.`
     );
     onClose();
   };
@@ -463,6 +465,25 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
                   border: '1px solid #cbd5e1',
                 }}
               />
+            </label>
+            <label style={{ fontWeight: 600, fontSize: 14 }}>
+              Jerarquía asignada por el Municipio:
+              <select
+                value={roadClass}
+                onChange={(e) => setRoadClass(e.target.value as RoadClass)}
+                style={{
+                  width: '100%',
+                  marginTop: 6,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #cbd5e1',
+                }}
+              >
+                <option value="troncal">Troncal (Estratégico / Tránsito clave)</option>
+                <option value="principal">Principal (Alto tránsito)</option>
+                <option value="secundario">Secundario (Tránsito medio)</option>
+                <option value="vecinal">Vecinal (Poco tránsito / Acceso a campos)</option>
+              </select>
             </label>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button
