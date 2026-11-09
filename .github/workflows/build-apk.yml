@@ -56,7 +56,7 @@ jobs:
           VITE_SUPABASE_ANON_KEY=sb_publishable_OLGoKYZstJTaJXocxjhuRA_6kULS_fg
           VITE_MAPTILER_API_KEY=vXCRGvZe0t2COY8hcviE
           EOF
-          echo "VITE_MAPBOX_TOKEN=$(echo 'cGsuZXlKMWlqb2lZMkZ0YVc1dmMzSjFjbUZzWlhNaUxDSmhJam9pWTJxd09IQjZlRzlwTURBMlpETXdiMk5pYmpvcmVYUnFiaUo5LnNSZi1TblV0LUlldnVtelJvWmpKMXc=' | base64 -d)" >> apps/mobile/.env
+          echo "VITE_MAPBOX_TOKEN=$(echo 'cGsuZXlKMUlqb2lZMkZ0YVc1dmMzSjFjbUZzWlhNaUxDSmhJam9pWTIxM09IQjZlRzlwTURBMlpETXdiMk5pYmpCck5YUnFiaUo5LnNSZi1TblV0LUlldnVtelJvWmpKMXc=' | base64 -d)" >> apps/mobile/.env
 
       - name: Build Web Assets
         run: |

@@ -59,7 +59,12 @@ Una única aplicación instalable en teléfonos móviles que atiende a todos los
 
 ### 📦 Fase 8: Conversión a Aplicación Nativa con Capacitor (Android & iOS)
 * **Objetivo:** Empaquetar la aplicación móvil como App Nativa para distribución directa y tiendas oficiales:
-  * **Para Android:** Compilación directa en la PC con Windows usando **Android Studio** para generar el archivo de prueba **`.apk`** (distribuible por WhatsApp/enlace) y el paquete de producción **`.aab`** para **Google Play Console** (\$25 USD pago único).
+  * **Para Android:** 
+    * Compilación automatizada en la nube con **GitHub Actions CI** (no requiere instalar Android Studio ni Java en la computadora del usuario).
+    * Generación del instalador **`.apk`** de prueba directa (descargable por enlace o WhatsApp) y paquete **`.aab`** para **Google Play Console** (\$25 USD pago único).
+    * **Deep Linking OAuth:** Integración de `@capacitor/app` y `@capacitor/browser` con esquema `com.caminosrurales.tejedor://login-callback` para que el inicio de sesión con Google en Chrome devuelva automáticamente los tokens a la app instalada.
+    * **Safe Area Insets:** Adaptación visual en CSS (`env(safe-area-inset-top)` y `env(safe-area-inset-bottom)`) para evitar solapamientos con la barra de estado y los controles de navegación de Android.
+    * **Herramienta Utilitaria para Administrador:** Grabación de caminos con auto-aprobación en el campo y botón directo *"Panel Web ↗"* para acceder a la gestión completa en el navegador.
   * **Para iOS (iPhone):** Generación del proyecto nativo en `/ios`. Compilación con **Xcode** (usando una Mac o servicio de compilación en la nube como GitHub Actions / Codemagic) para generar el archivo firmado para **Apple App Store Connect** (\$99 USD/año).
   * **Segundo Plano Garantizado:** Configuración de `FOREGROUND_SERVICE` y permisos de ubicación en segundo plano para que el GPS no se corte con la pantalla apagada.
 

@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import { App as CapApp } from '@capacitor/app';
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 import {
   MapPin,
   Navigation,
@@ -123,7 +126,46 @@ export const App: React.FC = () => {
       setAuthLoading(false);
     });
 
-    return () => sub.subscription.unsubscribe();
+    // Escuchar Deep Links en Capacitor Android (com.caminosrurales.tejedor://login-callback)
+    let appUrlListener: any = null;
+    if (Capacitor.isNativePlatform()) {
+      appUrlListener = CapApp.addListener('appUrlOpen', async (event) => {
+        const url = event.url;
+        if (!url) return;
+
+        // Cerrar ventana del navegador en primer plano
+        try {
+          await Browser.close();
+        } catch {
+          // Ya cerrado
+        }
+
+        // Caso 1: Supabase PKCE flow (?code=...)
+        const codeMatch = url.match(/[?&]code=([^&]+)/);
+        if (codeMatch) {
+          await supabase.auth.exchangeCodeForSession(decodeURIComponent(codeMatch[1]));
+          return;
+        }
+
+        // Caso 2: Supabase Implicit flow (#access_token=...&refresh_token=...)
+        const hashIdx = url.indexOf('#');
+        if (hashIdx !== -1) {
+          const params = new URLSearchParams(url.substring(hashIdx + 1));
+          const access_token = params.get('access_token');
+          const refresh_token = params.get('refresh_token');
+          if (access_token && refresh_token) {
+            await supabase.auth.setSession({ access_token, refresh_token });
+          }
+        }
+      });
+    }
+
+    return () => {
+      sub.subscription.unsubscribe();
+      if (appUrlListener) {
+        appUrlListener.then((l: any) => l?.remove?.());
+      }
+    };
   }, []);
 
   // Verificar si el usuario autenticado es Administrador y cargar sesión local recuperada
@@ -660,18 +702,44 @@ export const App: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     setLoginError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-    if (error) setLoginError(error.message);
+    if (Capacitor.isNativePlatform()) {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: 'com.caminosrurales.tejedor://login-callback',
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error) {
+        setLoginError(error.message);
+        return;
+      }
+      if (data?.url) {
+        await Browser.open({ url: data.url, windowName: '_self' });
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      });
+      if (error) setLoginError(error.message);
+    }
   };
 
   const handleLogout = async () => {
     stopGpsWatchers();
     await supabase.auth.signOut();
+  };
+
+  const openAdminPanel = async () => {
+    const adminUrl = 'https://caminosruralestejedor.netlify.app/admin';
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url: adminUrl });
+    } else {
+      window.open(adminUrl, '_blank');
+    }
   };
 
   if (authLoading) {
@@ -832,19 +900,42 @@ export const App: React.FC = () => {
           </div>
           <span className="user-email-sub">{session.user.email}</span>
             {isAdmin && (
-              <span
-                style={{
-                  marginLeft: 6,
-                  background: '#10b981',
-                  color: '#ffffff',
-                  fontSize: '10px',
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  fontWeight: 700,
-                }}
-              >
-                ADMIN
-              </span>
+              <>
+                <span
+                  style={{
+                    marginLeft: 6,
+                    background: '#10b981',
+                    color: '#ffffff',
+                    fontSize: '10px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontWeight: 700,
+                  }}
+                >
+                  ADMIN
+                </span>
+                <button
+                  type="button"
+                  onClick={openAdminPanel}
+                  style={{
+                    marginLeft: 6,
+                    background: '#f59e0b',
+                    color: '#1f2937',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                  }}
+                  title="Abrir Panel de Control Web en el navegador"
+                >
+                  Panel Web ↗
+                </button>
+              </>
             )}
         </div>
         <div className="inline-btns">

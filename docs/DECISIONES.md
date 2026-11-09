@@ -48,6 +48,19 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
   * **Tareas Puntuales (alcantarillas, tubos, bacheo):** **No requieren trackeo continuo**; se registran marcando el punto en el mapa o con la ubicación del dispositivo al momento de finalizar.
   * **Jornadas múltiples (Estado "Suspendida"):** Un trabajo puede ejecutarse en varios días mediante la opción "Terminar por hoy", cerrando la sesión del día y reanudando al día siguiente bajo la misma intervención sin duplicar tareas.
 
+### 9. Deep Linking para Retorno de Google OAuth en App Nativa (Android & iOS)
+* **Contexto:** Al tocar "Continuar con Google" desde la app nativa empaquetada (Capacitor APK), el sistema operativo abre el navegador (Chrome). Al completarse la autenticación, el navegador debe devolver el control y los tokens de sesión a la app nativa instalada en lugar de continuar dentro del navegador web.
+* **Decisión:**
+  * Se implementa un **Deep Link** con esquema personalizado `com.caminosrurales.tejedor://login-callback`.
+  * Se agrega el `<intent-filter>` correspondiente en `AndroidManifest.xml`.
+  * Se utilizan `@capacitor/app` y `@capacitor/browser` para detectar el retorno `appUrlOpen`, extraer el código o hash de sesión y llamar a `supabase.auth.exchangeCodeForSession` o `setSession`.
+
+### 10. Adaptabilidad de Pantalla Móvil (Safe Area Insets) y Administrador Utilitario en Teléfono
+* **Contexto:** En celulares con notch, cámara frontal perforada o barras de navegación virtuales por gestos, el contenido de la app nativa se solapaba con los iconos del sistema (hora, batería, señal) y los botones inferiores de navegación de Android. Asimismo, el Administrador en el celular no requiere un panel de escritorio pesado, sino una herramienta utilitaria de campo.
+* **Decisión:**
+  * **Safe Area Insets:** Se incorporan márgenes dinámicos en CSS (`env(safe-area-inset-top)` y `env(safe-area-inset-bottom)`) en el encabezado `.top-bar`, la navegación `.bottom-nav` y la pantalla de ingreso.
+  * **Administrador en el Móvil:** La app se mantiene 100% como herramienta operativa (grabación de caminos con auto-aprobación y carga de reclamos). Se agrega en el encabezado un botón directo *"Panel Web ↗"* que abre la plataforma web de gestión completa en el navegador, preservando la ligereza de la app de campo.
+
 ### 9. Independencia Geométrica de Intervenciones respecto a la Red de Caminos
 * **Decisión:** Las intervenciones se vinculan a nivel de camino (`road_id`) o por cálculo espacial en el mapa, y no a los segmentos internos `road_segments`. Esto garantiza que operaciones del motor vial (reprocesamiento, unión de caminos con `merge_roads` o revocaciones) jamás rompan ni borren el historial de obras realizadas.
 
