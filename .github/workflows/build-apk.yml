@@ -58,10 +58,10 @@ jobs:
           chmod +x apps/mobile/android/gradlew
           chmod -R +x apps/mobile/android/gradle/
 
-      - name: Sync Capacitor Android
+      - name: Copy Web Assets to Capacitor Android
         run: |
           cd apps/mobile
-          ./node_modules/.bin/cap sync android --verbose
+          npx @capacitor/cli copy android
 
       - name: Build Android APK (Debug)
         run: |
