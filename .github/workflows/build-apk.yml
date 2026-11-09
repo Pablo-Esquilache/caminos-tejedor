@@ -35,13 +35,10 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses & Install Android 36 SDK
+      - name: Install Android Platform 36 & Accept Licenses
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install Dependencies
         run: |
@@ -77,15 +74,6 @@ jobs:
         run: |
           cd apps/mobile/android
           ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: Upload Build Failure Logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-failure-logs
-          path: |
-            apps/mobile/android/app/build/reports/
-            apps/mobile/android/app/build/outputs/logs/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
