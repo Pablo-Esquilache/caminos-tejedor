@@ -48,17 +48,17 @@ jobs:
           npm --prefix apps/mobile run build
 
       - name: Make Gradle executable
-        run: chmod +x apps/mobile/android/gradlew
+        run: chmod -R +x apps/mobile/android
 
       - name: Sync Capacitor Android
         run: |
           cd apps/mobile
-          npm run cap -- sync android
+          npx @capacitor/cli sync android
 
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
