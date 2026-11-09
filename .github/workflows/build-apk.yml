@@ -13,6 +13,10 @@ jobs:
     name: Build Android Debug APK
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,7 +36,8 @@ jobs:
       - name: Install Dependencies
         run: |
           npm install
-          npm --prefix apps/mobile install
+          cd apps/mobile
+          npm install
 
       - name: Setup Mobile Environment Variables
         run: |
@@ -45,20 +50,23 @@ jobs:
 
       - name: Build Web Assets
         run: |
-          npm --prefix apps/mobile run build
+          cd apps/mobile
+          npm run build
 
       - name: Make Gradle executable
-        run: chmod -R +x apps/mobile/android
+        run: |
+          chmod +x apps/mobile/android/gradlew
+          chmod -R +x apps/mobile/android/gradle/
 
       - name: Sync Capacitor Android
         run: |
           cd apps/mobile
-          npx @capacitor/cli sync android
+          ./node_modules/.bin/cap sync android --verbose
 
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -75,7 +83,7 @@ jobs:
           name: "Caminos Rurales Carlos Tejedor — APK Android"
           body: |
             ### Instalador Nativo Android (.apk)
-            Descargá el archivo **`app-debug.apk`** en tu teléfono Android para probar la grabación de caminos con GPS en segundo plano y pantalla apagada.
+            Descargá el archivo **`app-debug.apk`** adjunto en tu teléfono Android para probar la grabación de caminos con GPS en segundo plano y pantalla apagada.
             
             **Novedades en esta versión:**
             * Login unificado: Botón Google para vecinos y acceso con usuario/clave para Administrador y Operarios.
