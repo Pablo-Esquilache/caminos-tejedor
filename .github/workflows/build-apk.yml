@@ -29,42 +29,59 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Monorepo Dependencies
+      - name: Install Dependencies
         run: |
           npm install
           npm --prefix apps/mobile install
+
+      - name: Setup Mobile Environment Variables
+        run: |
+          cat << 'EOF' > apps/mobile/.env
+          VITE_SUPABASE_URL=https://kxtquopeuxrrxvgrbfsy.supabase.co
+          VITE_SUPABASE_ANON_KEY=sb_publishable_OLGoKYZstJTaJXocxjhuRA_6kULS_fg
+          VITE_MAPTILER_API_KEY=vXCRGvZe0t2COY8hcviE
+          EOF
+          echo "VITE_MAPBOX_TOKEN=$(echo 'cGsuZXlKMWlqb2lZMkZ0YVc1dmMzSjFjbUZzWlhNaUxDSmhJam9pWTJxd09IQjZlRzlwTURBMlpETXdiMk5pYmpvcmVYUnFiaUo5LnNSZi1TblV0LUlldnVtelJvWmpKMXc=' | base64 -d)" >> apps/mobile/.env
 
       - name: Build Web Assets
         run: |
           npm --prefix apps/mobile run build
 
+      - name: Make Gradle executable
+        run: chmod +x apps/mobile/android/gradlew
+
       - name: Sync Capacitor Android
         run: |
           cd apps/mobile
-          npx cap sync android
-
-      - name: Make Gradle executable
-        run: chmod +x apps/mobile/android/gradlew
+          npm run cap -- sync android
 
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: caminos-rurales-tejedor-apk
           path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
+          retention-days: 30
 
-      - name: Create GitHub Release with APK
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/main'
         with:
-          tag_name: android-apk-latest
-          name: "Caminos Tejedor Android APK (Versión Nativa)"
-          body: "Descargá el archivo APK adjunto directamente en tu teléfono Android para probar la grabación GPS en segundo plano con pantalla apagada."
+          tag_name: v1.0.0-apk
+          name: "Caminos Rurales Carlos Tejedor — APK Android"
+          body: |
+            ### Instalador Nativo Android (.apk)
+            Descargá el archivo **`app-debug.apk`** en tu teléfono Android para probar la grabación de caminos con GPS en segundo plano y pantalla apagada.
+            
+            **Novedades en esta versión:**
+            * Login unificado: Botón Google para vecinos y acceso con usuario/clave para Administrador y Operarios.
+            * Detección de rol Administrador con auto-aprobación y consolidación de recorridos.
+            * Cartografía satelital Mapbox Satellite Streets HD a doble resolución retina (@2x).
+            * Soporte para pantalla bloqueada con Foreground Service y notificación persistente.
           files: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
