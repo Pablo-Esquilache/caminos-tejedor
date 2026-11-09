@@ -73,7 +73,14 @@ jobs:
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace > /tmp/gradle_build.log 2>&1 || {
+            echo "### ❌ Gradle Build Error Log" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            tail -n 80 /tmp/gradle_build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/gradle_build.log
+            exit 1
+          }
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
