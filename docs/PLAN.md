@@ -1,21 +1,28 @@
 # Plan de Acción y Estado de Implementación — Caminos Rurales de Carlos Tejedor
 
-> **Estado actual del proyecto (Noviembre 2026):** Las **Fases 1 a 7 están 100% completadas, probadas y desplegadas en producción** (Supabase + PostGIS, GitHub y Netlify). Este documento registra la arquitectura vigente, las Fases 1 a 7 cerradas, y la **Ampliación de Intervenciones Viales y Rol Operario (Fases 9 a 14) combinada con la Fase 8 (Capacitor / App Nativa)**.
+> **Estado actual del proyecto (Noviembre 2026):** Las **Fases 1 a 7 están 100% completadas, probadas y desplegadas en producción** (Supabase + PostGIS, GitHub y Netlify). Este documento registra la arquitectura vigente, las Fases 1 a 7 cerradas, y la **Ampliación de Intervenciones Viales y Rol Operario (Fases 9 a 14) combinada con la Fase 8 (Capacitor / App Nativa para Android e iOS)**.
 
 ---
 
-## 1. Arquitectura Definitiva y Tres Accesos Separados
+## 1. Arquitectura Definitiva y Acceso a la Plataforma
 
-El sistema cuenta con tres accesos bien diferenciados para garantizar máxima privacidad y usabilidad:
+### A. App Móvil Unificada (Nativa para Android e iOS con Capacitor)
+Una única aplicación instalable en teléfonos móviles que atiende a todos los usuarios con detección inteligente de roles:
 
-1. **App Móvil del Vecino (`/` — `apps/mobile`):**
-   * **100% exclusiva y limpia para el vecino común:** acceso únicamente con **"Continuar con Google"** (sin mención de trabajadores, operarios ni formularios administrativos).
-   * Grabación GPS real con persistencia inmediata en IndexedDB, cola de sincronización offline (*Outbox*) para recorridos y reclamos, y mapa satelital Mapbox HD `@2x`.
-2. **Acceso Exclusivo de Operarios de Maquinaria (`/operarios`):**
-   * Pantalla de login propia con **usuario/email y contraseña** asignados por el Municipio (sin obligar a usar Google personal en teléfonos de trabajo).
-   * Al ingresar, accede a su **Lista de Tareas**: visualización de tareas asignadas (planificadas por el Admin), ejecución de tareas lineales con GPS o registro de tareas puntuales (alcantarillas) y generación de tareas espontáneas en el campo.
-3. **Panel Web Municipal de Administración (`/admin` — `apps/admin`):**
-   * Centro de control municipal con verificación `is_admin()`, menú fijo (*sticky*) con contador de reclamos nuevos, programación de intervenciones sobre el mapa, validación de recorridos y trabajos, catálogos y estadísticas.
+* **Pantalla de Inicio de Sesión:**
+  * **Botón principal central:** *"Continuar con Google"* (la opción estándar e intuitiva para los vecinos rurales).
+  * **Enlace discreto inferior:** *`"¿Sos personal municipal? Ingresar con usuario y clave"`*. Al tocarlo, despliega los campos de correo y contraseña para que el **Administrador** (`caminostejedor@gmail.com`) y los **Operarios de Maquinaria** inicien sesión con sus credenciales municipales en Supabase Auth, sin confundir al vecino común.
+* **Comportamiento según el rol tras el login:**
+  * **Rol Vecino (`user`):** Interfaz estándar de grabación de caminos, reclamos viales con fotos y mapa satelital.
+  * **Rol Operario (`operator`):** Interfaz operativa de **Lista de Tareas**, con órdenes de trabajo asignadas por el Admin, ejecución con GPS en tramos o tareas puntuales (alcantarillas) y registro de tareas espontáneas.
+  * **Rol Administrador (`admin`):** Permite grabar con GPS en el campo con pantalla apagada; al guardar, el recorrido se **auto-aprueba y consolida inmediatamente en la red vial oficial**.
+* **Capacitor y Grabación en Segundo Plano:**
+  * Empaquetado nativo con `@capacitor-community/background-geolocation` y *Foreground Service* (Android) / *Background Location* (iOS) con notificación persistente para garantizar la grabación continua de GPS con la pantalla del celular apagada y bloqueada en el bolsillo.
+
+### B. Panel Web Municipal de Administración (`/admin` en Netlify)
+* Centro de control para el intendente y secretarios de obras públicas.
+* **En PC de escritorio:** Pantalla completa al 100%, mapa satelital Mapbox HD `@2x`, planificación de intervenciones, gestión de reclamos, catálogos y estadísticas.
+* **En el celular del Administrador (Web Mobile Responsive):** Si el intendente entra desde el navegador de su teléfono a `.../admin`, la interfaz se adapta automáticamente a la pantalla pequeña, permitiendo aprobar reclamos y consultar tareas desde cualquier lugar.
 
 ---
 
@@ -31,46 +38,40 @@ El sistema cuenta con tres accesos bien diferenciados para garantizar máxima pr
 
 ---
 
-## 3. Hoja de Ruta: Ampliación de Intervenciones Viales y Rol Operario (Fases 9 a 14) y Fase 8
+## 3. Hoja de Ruta: Fases 9 a 14 y Fase 8 (Capacitor Android e iOS)
 
 ### 🚜 Fase 9: Catálogos y Rol Operario en Base de Datos
-* **Objetivo:** Crear tablas `operators`, `machines` y `work_types`, funciones `is_operator()` y `get_my_role()`, y políticas RLS.
+* **Objetivo:** Tablas `operators`, `machines`, `work_types`, funciones `is_operator()` y `get_my_role()`, y políticas RLS.
 * **Panel `/admin`:** Pestaña "Intervenciones" con subpantallas para administrar Maquinaria, Operarios y Tipos de trabajo (activar/desactivar, nada se borra).
-* **Operarios:** Carga con cuenta (vinculada a Supabase Auth) o sin cuenta (solo registro para asignación histórica).
-* **Criterio de salida:** Migraciones aplicadas, catálogos administrables, pruebas de permisos con 4 perfiles (usuario común, operario, admin y anónimo).
+* **Operarios:** Carga con cuenta (Supabase Auth) o sin cuenta (registro para asignación histórica).
 
 ### 🗺️ Fase 10: Intervenciones Programadas desde el Panel y Capa en el Mapa
 * **Objetivo:** Programar tareas viales desde `/admin` (`interventions`, `intervention_work_types`, `intervention_machines`, `intervention_operators`, `intervention_history`).
 * **Definición de tramo:** Tres modos: (a) Seleccionar camino consolidado y marcar tramo, (b) marcar puntos sobre caminos con cálculo espacial (`ST_LineSubstring` en `EPSG:32720`) siguiendo curvas reales, o (c) dibujar a mano alzada.
 * **Mapa General:** Tercera capa "Intervenciones" independiente de Caminos y Reclamos.
-* **Criterio de salida:** Tareas programadas visibles en mapa y listado con filtros e historial.
 
-### 📱 Fase 11: Interfaz Exclusiva del Operario (`/operarios`)
-* **Objetivo:** Pantalla de acceso independiente `/operarios` con usuario y contraseña municipal.
-* **Vista del Operario:** "Lista de Tareas" asignadas (planificadas y abiertas) con camino, tramo en mapa, maquinaria asignada y cache offline en IndexedDB.
-* **Cero impacto en el vecino:** La ruta `/` permanece inalterada y sin botones de operarios.
-* **Criterio de salida:** Operario accede por `/operarios`, ve solo sus tareas asignadas y consulta offline.
+### 📱 Fase 11: Interfaz Operativa de Lista de Tareas en la App Móvil
+* **Objetivo:** Incorporar la vista de **Lista de Tareas** para operarios dentro de `apps/mobile` con el acceso diferenciado por usuario y clave.
+* **Vista del Operario:** Lista de tareas asignadas (planificadas y abiertas) con camino, tramo en mapa, maquinaria asignada y cache offline en IndexedDB.
 
 ### 🧪 Fase 12: Prototipo de GPS de Trabajos con Datos Reales (Spike)
 * **Objetivo:** Probar con 10 archivos GPX reales de motoniveladoras el algoritmo de detección de tramo trabajado (descartar pasadas repetidas de ida y vuelta, paradas largas y detectar tramos con curvas o esquinas).
-* **Criterio de salida:** Algoritmo validado y documentado en `docs/spike-trabajos-resultados.md`.
 
-### 📦 Fase 8: Conversión a Aplicación Nativa con Capacitor (Foreground Service)
-* **Objetivo:** Empaquetar la aplicación móvil como APK nativo de Android configurando `@capacitor-community/background-geolocation` con servicio en primer plano (*Foreground Service*) y notificación persistente en barra de estado.
-* **Por qué antes de Fase 13:** Permite que el maquinista bloquee la pantalla del teléfono y lo guarde en la cabina sin que Android suspenda el rastreo GPS durante la jornada de trabajo.
-* **Criterio de salida:** APK compilado y probado con pantalla apagada en campo.
+### 📦 Fase 8: Conversión a Aplicación Nativa con Capacitor (Android & iOS)
+* **Objetivo:** Empaquetar la aplicación móvil como App Nativa para distribución directa y tiendas oficiales:
+  * **Para Android:** Compilación directa en la PC con Windows usando **Android Studio** para generar el archivo de prueba **`.apk`** (distribuible por WhatsApp/enlace) y el paquete de producción **`.aab`** para **Google Play Console** (\$25 USD pago único).
+  * **Para iOS (iPhone):** Generación del proyecto nativo en `/ios`. Compilación con **Xcode** (usando una Mac o servicio de compilación en la nube como GitHub Actions / Codemagic) para generar el archivo firmado para **Apple App Store Connect** (\$99 USD/año).
+  * **Segundo Plano Garantizado:** Configuración de `FOREGROUND_SERVICE` y permisos de ubicación en segundo plano para que el GPS no se corte con la pantalla apagada.
 
 ### 🚜 Fase 13: Ejecución de Trabajos desde el Celular y Validación Municipal
-* **Objetivo:** El operario ejecuta tareas programadas o crea espontáneas desde `/operarios`.
+* **Objetivo:** El operario ejecuta tareas programadas o crea espontáneas desde su teléfono.
 * **Funcionalidad:**
-  * Tareas lineales: botón "Ejecutar" con GPS (no graba traslado desde corralón). Soporta "Terminar por hoy" (suspende la tarea y abre nueva sesión al día siguiente).
-  * Tareas puntuales (alcantarillas): registro de punto GPS y foto sin trackeo continuo.
-  * Vinculación opcional con reclamo vial cercano para marcarlo resuelto.
+  * Tareas lineales: botón "Ejecutar" con GPS (no graba traslado de corralón) y botón "Terminar por hoy" (suspende y acumula sesiones sin duplicar tareas).
+  * Tareas puntuales (alcantarillas): registro de punto GPS y fotos sin trackeo continuo.
+  * Vinculación opcional con reclamo vial cercano para marcarlo resuelto al validar.
 * **Panel `/admin`:** Bandeja de validación de trabajos con aprobación/rechazo individual y masivo.
-* **Criterio de salida:** Trabajo ejecutado en varios días validado en el mapa de intervenciones.
 
 ### 📊 Fase 14: Estadísticas e Indicadores de Intervenciones
 * **Objetivo:** Sección de intervenciones en Estadísticas (km trabajados, maquinaria más utilizada, distribución por tipo de trabajo, reclamos resueltos).
-* **Privacidad gremial:** Se reporta cantidad de operarios participantes sin rankings nominales de personas.
+* **Privacidad gremial:** Cantidad de operarios participantes sin rankings nominales de personas.
 * **Avisos:** Se suman los trabajos pendientes al resumen semanal unificado por email (Brevo).
-* **Criterio de salida:** Consultas de control en `supabase/tests/stats_checks.sql` aprobadas.

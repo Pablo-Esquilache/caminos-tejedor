@@ -23,23 +23,33 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
 
 ---
 
-## 2026-11-09 — Ampliación: Intervenciones Viales y Rol Operario (Fases 9 a 14)
+## 2026-11-09 — Ampliación: Intervenciones Viales y Rol Operario (Fases 9 a 14) y Fase 8
 
-### 6. Tres Accesos Separados e Independientes (`/`, `/operarios`, `/admin`)
-* **Contexto:** Se requiere brindar a los maquinistas y cuadrillas viales una herramienta operativa sin alterar la experiencia simple del vecino ni mezclarla con el panel administrativo general.
+### 6. Login Unificado Inteligente en la App Móvil (Vecino vs. Personal Municipal)
+* **Contexto:** Se requiere brindar acceso tanto al vecino común (con Google) como a los operarios de maquinaria y administradores (con correo y contraseña municipal creados en Supabase Auth) desde la misma app móvil, sin confundir al vecino ni obligar a los maquinistas a usar cuentas personales de Google en teléfonos de trabajo.
 * **Decisión:**
-  * **App del Vecino (`/`):** 100% limpia y exclusiva para vecinos con botón "Continuar con Google". Sin textos ni opciones de acceso de trabajadores.
-  * **Acceso Operarios (`/operarios`):** Pantalla de acceso propia con usuario/email y contraseña generados por el Municipio en Supabase Auth.
-  * **Panel Municipal (`/admin`):** Acceso con permisos de administrador para intendente y secretarios.
+  * **Pantalla de Login Móvil:**
+    * Botón central principal: *"Continuar con Google"* (destinado al vecino).
+    * Enlace discreto inferior: *`"¿Sos personal municipal? Ingresar con usuario y clave"`*, que al tocarse despliega los campos de email y contraseña.
+  * **Detección de Roles post-login:**
+    * Si ingresa un **Vecino (`user`)**: accede a la app de siempre (grabar caminos, reclamos y mapa).
+    * Si ingresa un **Operario (`operator`)**: accede a la **Lista de Tareas** asignadas por el Municipio (ejecutar trabajos con GPS o tareas puntuales).
+    * Si ingresa el **Administrador (`admin`)**: la app le permite grabar con GPS nativo en segundo plano y sus recorridos se **auto-aprueban y consolidan de inmediato**.
 
-### 7. Enfoque de Lista de Tareas y Dualidad de Tareas (Lineales vs. Puntuales)
+### 7. Estrategia de Empaquetado Nativo con Capacitor (Fase 8: Android & iOS)
+* **Decisión:**
+  * **Android:** Compilación en la PC del desarrollador con **Android Studio** para generar el `.apk` de prueba directa (compartible por WhatsApp/enlace) y el paquete `.aab` para **Google Play Console** (\$25 USD pago único).
+  * **iOS (iPhone):** Generación del proyecto nativo en `/ios` con Capacitor. Compilación con **Xcode** (usando Mac o servicio de compilación en la nube) para generar el `.ipa` publicado en **Apple App Store Connect** (\$99 USD/año).
+  * **Servicio en Primer Plano:** Uso de `@capacitor-community/background-geolocation` con `FOREGROUND_SERVICE` para que el GPS de la máquina o vehículo no se suspenda al bloquear la pantalla.
+
+### 8. Enfoque de Lista de Tareas y Dualidad de Tareas (Lineales vs. Puntuales)
 * **Decisión:**
   * **Tareas Lineales (motoniveladora, alteo, cuneteo, perfilado):** Requieren **trackeo GPS** para certificar tramo, pasadas y kilómetros reales. El rastreo inicia en el tramo de trabajo (no se graba el traslado desde el corralón).
   * **Tareas Puntuales (alcantarillas, tubos, bacheo):** **No requieren trackeo continuo**; se registran marcando el punto en el mapa o con la ubicación del dispositivo al momento de finalizar.
   * **Jornadas múltiples (Estado "Suspendida"):** Un trabajo puede ejecutarse en varios días mediante la opción "Terminar por hoy", cerrando la sesión del día y reanudando al día siguiente bajo la misma intervención sin duplicar tareas.
 
-### 8. Independencia Geométrica de Intervenciones respecto a la Red de Caminos
+### 9. Independencia Geométrica de Intervenciones respecto a la Red de Caminos
 * **Decisión:** Las intervenciones se vinculan a nivel de camino (`road_id`) o por cálculo espacial en el mapa, y no a los segmentos internos `road_segments`. Esto garantiza que operaciones del motor vial (reprocesamiento, unión de caminos con `merge_roads` o revocaciones) jamás rompan ni borren el historial de obras realizadas.
 
-### 9. Privacidad Gremial y Protección Laboral
+### 10. Privacidad Gremial y Protección Laboral
 * **Decisión:** En los paneles públicos y estadísticas de intervenciones **no se generan rankings nominales de operarios ni competencias de personas**. Se reportan metros/kilómetros trabajados por máquina y tipos de obra, y en trabajos compartidos se distingue al **operario responsable** (que opera el rastreo) de los **participantes**.
