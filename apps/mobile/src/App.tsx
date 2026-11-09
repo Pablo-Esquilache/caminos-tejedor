@@ -215,6 +215,7 @@ export const App: React.FC = () => {
       p_distance_m: item.distance_m,
       p_duration_s: item.duration_s,
       p_raw_points: item.raw_points,
+      p_initial_road_class: null,
     });
 
     if (error) {
