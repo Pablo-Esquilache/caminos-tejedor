@@ -52,7 +52,7 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
 * **Contexto:** Al tocar "Continuar con Google" desde la app nativa empaquetada (Capacitor APK), el sistema operativo abre el navegador (Chrome). Al completarse la autenticación, el navegador debe devolver el control y los tokens de sesión a la app nativa instalada en lugar de continuar dentro del navegador web.
 * **Decisión:**
   * Se implementa un **Deep Link** con esquema personalizado `com.caminosrurales.tejedor://login-callback`.
-  * Se agrega el `<intent-filter>` correspondiente en `AndroidManifest.xml`.
+  * Se agrega el `<intent-filter>` correspondiente en `AndroidManifest.xml` y bloque `<queries>` para permitir la invocación de Custom Tabs en Android 11+.
   * Se utilizan `@capacitor/app` y `@capacitor/browser` para detectar el retorno `appUrlOpen`, extraer el código o hash de sesión y llamar a `supabase.auth.exchangeCodeForSession` o `setSession`.
 
 ### 10. Adaptabilidad de Pantalla Móvil (Safe Area Insets) y Administrador Utilitario en Teléfono
@@ -61,8 +61,14 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
   * **Safe Area Insets:** Se incorporan márgenes dinámicos en CSS (`env(safe-area-inset-top)` y `env(safe-area-inset-bottom)`) en el encabezado `.top-bar`, la navegación `.bottom-nav` y la pantalla de ingreso.
   * **Administrador en el Móvil:** La app se mantiene 100% como herramienta operativa (grabación de caminos con auto-aprobación y carga de reclamos). Se agrega en el encabezado un botón directo *"Panel Web ↗"* que abre la plataforma web de gestión completa en el navegador, preservando la ligereza de la app de campo.
 
-### 9. Independencia Geométrica de Intervenciones respecto a la Red de Caminos
+### 11. Frecuencia de Muestreo GPS: Pantalla Activa vs. Pantalla Bloqueada
+* **Contexto:** En los caminos rurales de Carlos Tejedor, las curvas no son continuas sino que suelen presentar esquinas pronunciadas a 90 grados al doblar entre cuadros o parcelas. Al bloquear la pantalla para ahorrar batería, un muestreo excesivamente espaciado cortaba las esquinas con líneas rectas.
+* **Decisión:**
+  * **Pantalla activa / encendida:** Muestreo de alta frecuencia cada 1 a 2 segundos mediante `watchPosition`.
+  * **Pantalla bloqueada / en segundo plano:** Muestreo cada 2 a 3 segundos (2.5s) o 10 metros mediante temporizador nativo reforzado, registrando de 3 a 4 puntos en cada giro de 90° (que a 15-20 km/h demora entre 6 y 10 segundos), capturando la geometría real del camino sin gastar batería innecesaria. Se descarta ruido por micro-movimiento (< 2 metros) al estar detenido.
+
+### 12. Independencia Geométrica de Intervenciones respecto a la Red de Caminos
 * **Decisión:** Las intervenciones se vinculan a nivel de camino (`road_id`) o por cálculo espacial en el mapa, y no a los segmentos internos `road_segments`. Esto garantiza que operaciones del motor vial (reprocesamiento, unión de caminos con `merge_roads` o revocaciones) jamás rompan ni borren el historial de obras realizadas.
 
-### 10. Privacidad Gremial y Protección Laboral
+### 13. Privacidad Gremial y Protección Laboral
 * **Decisión:** En los paneles públicos y estadísticas de intervenciones **no se generan rankings nominales de operarios ni competencias de personas**. Se reportan metros/kilómetros trabajados por máquina y tipos de obra, y en trabajos compartidos se distingue al **operario responsable** (que opera el rastreo) de los **participantes**.

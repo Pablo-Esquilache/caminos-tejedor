@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { App as CapApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
 import {
   MapPin,
   Navigation,
@@ -97,6 +98,8 @@ export const App: React.FC = () => {
   const [selectedSampleIdx, setSelectedSampleIdx] = useState(0);
   const simStepRef = useRef(0);
   const watchIdRef = useRef<number | null>(null);
+  const nativeWatchIdRef = useRef<string | null>(null);
+  const nativeIntervalRef = useRef<number | null>(null);
   const simIntervalRef = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const sessionRef = useRef<ActiveRecordingSession | null>(null);
@@ -343,6 +346,14 @@ export const App: React.FC = () => {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
+    if (nativeWatchIdRef.current !== null) {
+      Geolocation.clearWatch({ id: nativeWatchIdRef.current });
+      nativeWatchIdRef.current = null;
+    }
+    if (nativeIntervalRef.current !== null) {
+      window.clearInterval(nativeIntervalRef.current);
+      nativeIntervalRef.current = null;
+    }
     if (simIntervalRef.current !== null) {
       window.clearInterval(simIntervalRef.current);
       simIntervalRef.current = null;
@@ -416,6 +427,68 @@ export const App: React.FC = () => {
           handleIncomingPoint(buildSimulatedPoint(lon, lat, 5));
         }
       }, 900);
+      return;
+    }
+
+    // Modo nativo en Android (Capacitor) con alta frecuencia para pantalla bloqueada
+    if (Capacitor.isNativePlatform()) {
+      Geolocation.requestPermissions().then((perm) => {
+        if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
+          // 1. Watcher nativo continuo (pantalla encendida: 1 punto cada 1 a 2 seg)
+          Geolocation.watchPosition(
+            {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 1000,
+            },
+            (pos, err) => {
+              if (err) {
+                setGpsError(`Error GPS nativo: ${err.message}`);
+                return;
+              }
+              if (pos) {
+                handleIncomingPoint({
+                  lat: pos.coords.latitude,
+                  lon: pos.coords.longitude,
+                  timestamp: pos.timestamp || Date.now(),
+                  accuracy: pos.coords.accuracy || 5,
+                  altitude: pos.coords.altitude ?? undefined,
+                  speed: pos.coords.speed ?? undefined,
+                });
+              }
+            }
+          ).then((id) => {
+            nativeWatchIdRef.current = id;
+          });
+
+          // 2. Frecuencia nativa garantizada para pantalla bloqueada (1 punto cada 2.5 seg)
+          nativeIntervalRef.current = window.setInterval(async () => {
+            const cur = sessionRef.current;
+            if (!cur || cur.status !== 'recording') return;
+            try {
+              const pos = await Geolocation.getCurrentPosition({
+                enableHighAccuracy: true,
+                timeout: 3000,
+                maximumAge: 1500,
+              });
+              if (pos) {
+                handleIncomingPoint({
+                  lat: pos.coords.latitude,
+                  lon: pos.coords.longitude,
+                  timestamp: pos.timestamp || Date.now(),
+                  accuracy: pos.coords.accuracy || 5,
+                  altitude: pos.coords.altitude ?? undefined,
+                  speed: pos.coords.speed ?? undefined,
+                });
+              }
+            } catch {
+              // Posición previa retenida
+            }
+          }, 2500);
+        } else {
+          setGpsError('Permisos de GPS denegados en el dispositivo.');
+        }
+      });
       return;
     }
 
@@ -702,29 +775,37 @@ export const App: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     setLoginError(null);
-    if (Capacitor.isNativePlatform()) {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: 'com.caminosrurales.tejedor://login-callback',
-          skipBrowserRedirect: true,
-        },
-      });
-      if (error) {
-        setLoginError(error.message);
-        return;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: 'com.caminosrurales.tejedor://login-callback',
+            skipBrowserRedirect: true,
+          },
+        });
+        if (error) {
+          setLoginError(error.message);
+          return;
+        }
+        if (data?.url) {
+          try {
+            await Browser.open({ url: data.url });
+          } catch {
+            window.location.href = data.url;
+          }
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin,
+          },
+        });
+        if (error) setLoginError(error.message);
       }
-      if (data?.url) {
-        await Browser.open({ url: data.url, windowName: '_self' });
-      }
-    } else {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin,
-        },
-      });
-      if (error) setLoginError(error.message);
+    } catch (err: any) {
+      setLoginError(err?.message || 'Error al conectar con Google');
     }
   };
 
@@ -735,10 +816,14 @@ export const App: React.FC = () => {
 
   const openAdminPanel = async () => {
     const adminUrl = 'https://caminosruralestejedor.netlify.app/admin';
-    if (Capacitor.isNativePlatform()) {
-      await Browser.open({ url: adminUrl });
-    } else {
-      window.open(adminUrl, '_blank');
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await Browser.open({ url: adminUrl });
+      } else {
+        window.open(adminUrl, '_blank');
+      }
+    } catch {
+      window.open(adminUrl, '_system');
     }
   };
 

@@ -72,6 +72,14 @@ jobs:
         run: |
           cd apps/mobile
           npx cap copy android
+          mkdir -p android/app/src/main/assets
+          cat << 'EOF' > android/app/src/main/assets/capacitor.plugins.json
+          [
+            {"pkg": "@capacitor/app", "classpath": "com.capacitorjs.plugins.app.AppPlugin"},
+            {"pkg": "@capacitor/browser", "classpath": "com.capacitorjs.plugins.browser.BrowserPlugin"},
+            {"pkg": "@capacitor/geolocation", "classpath": "com.capacitorjs.plugins.geolocation.GeolocationPlugin"}
+          ]
+          EOF
 
       - name: Build Android APK (Debug)
         run: |
