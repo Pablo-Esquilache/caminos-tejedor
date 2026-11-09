@@ -75,7 +75,18 @@ jobs:
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle_output.txt
+
+      - name: Push Error Log on Failure
+        if: failure()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B build-error-log
+          tail -n 120 /tmp/gradle_output.txt > LAST_BUILD_ERROR.txt
+          git add LAST_BUILD_ERROR.txt
+          git commit -m "ci: captura de error de compilacion gradle [skip ci]" || true
+          git push -f origin build-error-log
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
