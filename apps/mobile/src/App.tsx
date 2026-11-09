@@ -56,6 +56,10 @@ export const App: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showMunicipalLogin, setShowMunicipalLogin] = useState(false);
+  const [municipalEmail, setMunicipalEmail] = useState("");
+  const [municipalPassword, setMunicipalPassword] = useState("");
+  const [loggingInPassword, setLoggingInPassword] = useState(false);
 
   // Navegación principal
   const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map' | 'claims' | 'notifications'>('record');
@@ -637,6 +641,23 @@ export const App: React.FC = () => {
     setDetailLoading(false);
   };
 
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!municipalEmail.trim() || !municipalPassword) return;
+    setLoggingInPassword(true);
+    setLoginError(null);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: municipalEmail.trim(),
+      password: municipalPassword,
+    });
+    setLoggingInPassword(false);
+    if (error) {
+      setLoginError('Credenciales incorrectas: verifique correo y contraseña.');
+    } else if (data?.session) {
+      setSession(data.session);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     setLoginError(null);
     const { error } = await supabase.auth.signInWithOAuth({
@@ -700,6 +721,97 @@ export const App: React.FC = () => {
             Continuar con Google
           </button>
 
+          <div style={{ marginTop: 24, textAlign: 'center' }}>
+            {!showMunicipalLogin ? (
+              <button
+                type="button"
+                onClick={() => setShowMunicipalLogin(true)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--primary, #047857)',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                }}
+              >
+                ¿Sos personal municipal? Ingresar con usuario y clave
+              </button>
+            ) : (
+              <form
+                onSubmit={handlePasswordLogin}
+                style={{
+                  marginTop: 12,
+                  padding: '16px',
+                  background: '#f8fafc',
+                  borderRadius: '12px',
+                  border: '1px solid #e2e8f0',
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#334155' }}>
+                  Ingreso de Personal Municipal (Admin y Operarios)
+                </div>
+                <input
+                  type="email"
+                  required
+                  placeholder="Correo institucional"
+                  value={municipalEmail}
+                  onChange={(e) => setMunicipalEmail(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.9rem',
+                    background: '#ffffff',
+                  }}
+                />
+                <input
+                  type="password"
+                  required
+                  placeholder="Contraseña"
+                  value={municipalPassword}
+                  onChange={(e) => setMunicipalPassword(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.9rem',
+                    background: '#ffffff',
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={loggingInPassword}
+                  className="btn-primary"
+                  style={{ padding: '10px', fontSize: '0.9rem', fontWeight: 700 }}
+                >
+                  {loggingInPassword ? 'Ingresando...' : 'Iniciar Sesión'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMunicipalLogin(false)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#64748b',
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    marginTop: 4,
+                  }}
+                >
+                  Volver al ingreso para vecinos
+                </button>
+              </form>
+            )}
+          </div>
+
         </div>
       </div>
     );
@@ -719,6 +831,21 @@ export const App: React.FC = () => {
             <span>Caminos Tejedor</span>
           </div>
           <span className="user-email-sub">{session.user.email}</span>
+            {isAdmin && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  background: '#10b981',
+                  color: '#ffffff',
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  fontWeight: 700,
+                }}
+              >
+                ADMIN
+              </span>
+            )}
         </div>
         <div className="inline-btns">
           <button

@@ -14,15 +14,14 @@ node_modules/
 *.keystore
 service-account*.json
 
-# Expo / React Native
+# Mobile / Native builds
 .expo/
 dist/
 web-build/
-android/
-ios/
 *.apk
 *.aab
 *.ipa
+*.zip
 
 # Vite / Admin Panel
 apps/admin/dist/

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Caminos Tejedor</string>
+    <string name="title_activity_main">Caminos Tejedor</string>
+    <string name="package_name">com.caminosrurales.tejedor</string>
+    <string name="custom_url_scheme">com.caminosrurales.tejedor</string>
+</resources>
