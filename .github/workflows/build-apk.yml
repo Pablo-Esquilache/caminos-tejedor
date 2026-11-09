@@ -88,11 +88,18 @@ jobs:
           git commit -m "ci: captura de error de compilacion gradle [skip ci]" || true
           git push -f origin build-error-log
 
+      - name: Locate and Prepare APK
+        run: |
+          mkdir -p dist-apk
+          find apps/mobile/android -name "*.apk" -type f -exec cp {} dist-apk/app-debug.apk \;
+          echo "Found APK:"
+          ls -lh dist-apk/
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: caminos-rurales-tejedor-apk
-          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          path: dist-apk/app-debug.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release
@@ -110,6 +117,6 @@ jobs:
             * Detección de rol Administrador con auto-aprobación y consolidación de recorridos.
             * Cartografía satelital Mapbox Satellite Streets HD a doble resolución retina (@2x).
             * Soporte para pantalla bloqueada con Foreground Service y notificación persistente.
-          files: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          files: dist-apk/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
