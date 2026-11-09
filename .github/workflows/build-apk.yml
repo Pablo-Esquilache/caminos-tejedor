@@ -76,17 +76,18 @@ jobs:
         run: |
           cd apps/mobile/android
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle_output.txt
+          test ${PIPESTATUS[0]} -eq 0
 
-      - name: Push Error Log on Failure
-        if: failure()
+      - name: Push Build Log to Debug Branch
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B build-error-log
-          tail -n 120 /tmp/gradle_output.txt > LAST_BUILD_ERROR.txt
-          git add LAST_BUILD_ERROR.txt
-          git commit -m "ci: captura de error de compilacion gradle [skip ci]" || true
-          git push -f origin build-error-log
+          git checkout -B build-log
+          tail -n 120 /tmp/gradle_output.txt > LAST_BUILD_LOG.txt
+          git add LAST_BUILD_LOG.txt
+          git commit -m "ci: log de compilacion gradle [skip ci]" || true
+          git push -f origin build-log
 
       - name: Locate and Prepare APK
         run: |
