@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { CARLOS_TEJEDOR_CENTER } from '@shared';
-import { maptilerApiKey } from '../lib/supabase';
+import { getMapStyle } from '../lib/mapStyle';
 
 interface RouteMapProps {
   coordinates: Array<[number, number]>; // [lon, lat]
@@ -17,11 +17,6 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<'streets' | 'hybrid'>('hybrid');
-
-  const getStyleUrl = (styleType: 'streets' | 'hybrid') => {
-    const styleName = styleType === 'hybrid' ? 'hybrid' : 'streets-v2';
-    return `https://api.maptiler.com/maps/${styleName}/style.json?key=${maptilerApiKey}`;
-  };
 
   const renderRouteLayer = (map: maplibregl.Map, coords: Array<[number, number]>) => {
     const geojsonData: GeoJSON.FeatureCollection = {
@@ -139,7 +134,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: getStyleUrl(mapStyle),
+      style: getMapStyle(mapStyle),
       center: initialCenter,
       zoom: coordinates.length > 0 ? 13 : CARLOS_TEJEDOR_CENTER.defaultZoom,
       attributionControl: false,

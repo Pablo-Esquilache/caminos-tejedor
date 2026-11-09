@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { CARLOS_TEJEDOR_CENTER, ROAD_CLASS_LABELS, type RoadClass } from '@shared';
-import { maptilerApiKey, supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/geo';
 
 interface ConsolidatedSegment {
@@ -22,11 +23,6 @@ export const ConsolidatedRoadsMap: React.FC = () => {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
   const [segmentsCount, setSegmentsCount] = useState(0);
-
-  const getStyleUrl = (s: 'hybrid' | 'streets') => {
-    const styleName = s === 'hybrid' ? 'hybrid' : 'streets-v2';
-    return `https://api.maptiler.com/maps/${styleName}/style.json?key=${maptilerApiKey}`;
-  };
 
   const loadRoadsInViewport = async (map: maplibregl.Map) => {
     const bounds = map.getBounds();
@@ -174,7 +170,7 @@ export const ConsolidatedRoadsMap: React.FC = () => {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: getStyleUrl(mapStyle),
+      style: getMapStyle(mapStyle),
       center: [CARLOS_TEJEDOR_CENTER.longitude, CARLOS_TEJEDOR_CENTER.latitude],
       zoom: CARLOS_TEJEDOR_CENTER.defaultZoom,
       attributionControl: false,

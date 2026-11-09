@@ -9,7 +9,8 @@ import {
   type ClaimStatus,
   type RoadClass,
 } from '@shared';
-import { maptilerApiKey, supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
 
 interface MapTripFeature {
@@ -80,11 +81,6 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [visibleRoadsCount, setVisibleRoadsCount] = useState(0);
   const [visibleClaimsCount, setVisibleClaimsCount] = useState(0);
   const [loadingBbox, setLoadingBbox] = useState(false);
-
-  const getStyleUrl = (s: 'hybrid' | 'streets') => {
-    const styleName = s === 'hybrid' ? 'hybrid' : 'streets-v2';
-    return `https://api.maptiler.com/maps/${styleName}/style.json?key=${maptilerApiKey}`;
-  };
 
   const fetchViewportData = async (map: maplibregl.Map) => {
     if (mode !== 'general') return;
@@ -664,7 +660,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: getStyleUrl(mapStyle),
+      style: getMapStyle(mapStyle),
       center: [CARLOS_TEJEDOR_CENTER.longitude, CARLOS_TEJEDOR_CENTER.latitude],
       zoom: CARLOS_TEJEDOR_CENTER.defaultZoom,
       attributionControl: false,
