@@ -221,6 +221,31 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // 1. Detectar tokens pasados en el hash de la URL (handoff automático desde la app móvil)
+    const hash = window.location.hash;
+    if (hash && hash.includes('access_token=')) {
+      const cleanHash = hash.replace(/^#/, '');
+      const params = new URLSearchParams(cleanHash);
+      const access_token = params.get('access_token');
+      const refresh_token = params.get('refresh_token');
+      if (access_token && refresh_token) {
+        supabase.auth.setSession({ access_token, refresh_token }).then(({ data, error }) => {
+          // Limpiar hash de la barra de direcciones para no exponer tokens
+          try {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          } catch {
+            // Noop
+          }
+          if (!error && data?.session) {
+            verifySessionAndAdmin(data.session);
+          } else {
+            verifySessionAndAdmin(null);
+          }
+        });
+        return;
+      }
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       verifySessionAndAdmin(data.session);
     });

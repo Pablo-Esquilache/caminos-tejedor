@@ -72,3 +72,11 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
 
 ### 13. Privacidad Gremial y Protección Laboral
 * **Decisión:** En los paneles públicos y estadísticas de intervenciones **no se generan rankings nominales de operarios ni competencias de personas**. Se reportan metros/kilómetros trabajados por máquina y tipos de obra, y en trabajos compartidos se distingue al **operario responsable** (que opera el rastreo) de los **participantes**.
+
+### 14. Puente Web OAuth (`auth-callback.html`) para Retorno a App Nativa
+* **Contexto:** Al autenticar con Google en dispositivos móviles, los navegadores y proveedores OAuth (Google Cloud Console y Supabase) exigen redirecciones a dominios web `https://` autorizados y restringen esquemas URI personalizados (`com.caminosrurales.tejedor://`). Si se intenta redirigir directamente al esquema custom, Supabase recae en la URL base del sitio y deja al usuario atrapado en el navegador interno.
+* **Decisión:** Se implementa una página puente estática en Netlify (`/auth-callback.html`). Google y Supabase redirigen con éxito a esta URL web HTTPS permitida, y el script de la página dispara de inmediato el Deep Link nativo `com.caminosrurales.tejedor://login-callback` con el token o código correspondiente. Android intercepta el esquema, vuelve a la app móvil en primer plano y cierra automáticamente la pestaña del navegador con `Browser.close()`.
+
+### 15. Transferencia de Sesión (SSO Handoff) desde App Móvil al Panel Web de Administración
+* **Contexto:** La app móvil instalada y el navegador Chrome mantienen almacenamientos y cookies completamente aislados. Cuando el Administrador pulsa *"Panel Web ↗"*, Chrome no tenía acceso a la sesión iniciada en la app y volvía a pedir usuario y contraseña.
+* **Decisión:** Al pulsar *"Panel Web ↗"*, la app móvil adjunta los tokens de sesión activos (`access_token` y `refresh_token`) en el fragmento hash de la URL (`#access_token=...&refresh_token=...&type=sso`). El Panel Web en `/admin` detecta estos tokens al montar, los registra en Supabase (`setSession`), limpia de inmediato la barra de direcciones con `window.history.replaceState` para no exponer los tokens, y concede acceso directo al panel administrativo sin solicitar nuevamente las credenciales.

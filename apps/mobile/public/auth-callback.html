@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iniciando sesión — Caminos Rurales Carlos Tejedor</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid #334155;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 20px auto;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    h2 {
+      font-size: 20px;
+      margin: 0 0 10px 0;
+      color: #ffffff;
+    }
+    p {
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0 0 20px 0;
+    }
+    .btn {
+      display: inline-block;
+      width: 100%;
+      padding: 14px 20px;
+      background: #2563eb;
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: 10px;
+      transition: background 0.2s;
+    }
+    .btn:active {
+      background: #1d4ed8;
+    }
+    .fallback-link {
+      display: none;
+      margin-top: 18px;
+      font-size: 13px;
+      color: #64748b;
+    }
+    .fallback-link a {
+      color: #60a5fa;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h2>Conectando con la aplicación...</h2>
+    <p>Se validó tu cuenta de Google. Volviendo a la aplicación móvil instalada en tu teléfono.</p>
+    <a id="deepLinkBtn" href="#" class="btn">Abrir aplicación</a>
+    <div id="fallbackBox" class="fallback-link">
+      ¿Estás en la computadora o no se abre la app?<br/>
+      <a id="webFallbackLink" href="/">Continuar en la versión web</a>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var search = window.location.search || '';
+      var hash = window.location.hash || '';
+      var deepLink = 'com.caminosrurales.tejedor://login-callback' + search + hash;
+
+      var btn = document.getElementById('deepLinkBtn');
+      if (btn) btn.href = deepLink;
+
+      var webLink = document.getElementById('webFallbackLink');
+      if (webLink) webLink.href = '/' + search + hash;
+
+      // 1. Redirección inmediata por cambio de URL
+      try {
+        window.location.replace(deepLink);
+      } catch (e) {
+        window.location.href = deepLink;
+      }
+
+      // 2. Fallback de temporizador por si Chrome bloquea el primer replace
+      setTimeout(function() {
+        window.location.href = deepLink;
+      }, 500);
+
+      // 3. Si después de 3.5 segundos sigue acá, mostrar enlace a versión web
+      setTimeout(function() {
+        var box = document.getElementById('fallbackBox');
+        if (box) box.style.display = 'block';
+      }, 3500);
+    })();
+  </script>
+</body>
+</html>

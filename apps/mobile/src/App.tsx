@@ -136,17 +136,21 @@ export const App: React.FC = () => {
         const url = event.url;
         if (!url) return;
 
-        // Cerrar ventana del navegador en primer plano
+        // Cerrar inmediatamente la ventana del navegador Custom Tab
         try {
           await Browser.close();
         } catch {
           // Ya cerrado
         }
 
-        // Caso 1: Supabase PKCE flow (?code=...)
-        const codeMatch = url.match(/[?&]code=([^&]+)/);
+        // Caso 1: Supabase PKCE flow (?code=... o #code=...)
+        const codeMatch = url.match(/[?&#]code=([^&#]+)/);
         if (codeMatch) {
-          await supabase.auth.exchangeCodeForSession(decodeURIComponent(codeMatch[1]));
+          try {
+            await supabase.auth.exchangeCodeForSession(decodeURIComponent(codeMatch[1]));
+          } catch (err) {
+            console.error('Error al intercambiar código:', err);
+          }
           return;
         }
 
@@ -157,7 +161,11 @@ export const App: React.FC = () => {
           const access_token = params.get('access_token');
           const refresh_token = params.get('refresh_token');
           if (access_token && refresh_token) {
-            await supabase.auth.setSession({ access_token, refresh_token });
+            try {
+              await supabase.auth.setSession({ access_token, refresh_token });
+            } catch (err) {
+              console.error('Error al restaurar sesión:', err);
+            }
           }
         }
       });
@@ -780,7 +788,7 @@ export const App: React.FC = () => {
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: 'com.caminosrurales.tejedor://login-callback',
+            redirectTo: 'https://caminosruralestejedor.netlify.app/auth-callback.html',
             skipBrowserRedirect: true,
           },
         });
@@ -790,7 +798,7 @@ export const App: React.FC = () => {
         }
         if (data?.url) {
           try {
-            await Browser.open({ url: data.url });
+            await Browser.open({ url: data.url, windowName: '_self' });
           } catch {
             window.location.href = data.url;
           }
@@ -815,10 +823,13 @@ export const App: React.FC = () => {
   };
 
   const openAdminPanel = async () => {
-    const adminUrl = 'https://caminosruralestejedor.netlify.app/admin';
+    let adminUrl = 'https://caminosruralestejedor.netlify.app/admin';
+    if (session?.access_token && session?.refresh_token) {
+      adminUrl += `#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}&type=sso`;
+    }
     try {
       if (Capacitor.isNativePlatform()) {
-        await Browser.open({ url: adminUrl });
+        await Browser.open({ url: adminUrl, windowName: '_system' });
       } else {
         window.open(adminUrl, '_blank');
       }

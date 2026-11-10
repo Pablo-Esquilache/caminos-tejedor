@@ -39,9 +39,12 @@ fs.mkdirSync(adminTarget, { recursive: true });
 fs.cpSync(path.join(adminDir, 'dist'), adminTarget, { recursive: true });
 
 // 4. Escribir reglas _redirects para que tanto "/" (Vecinos) como "/admin" (Panel Municipal) funcionen
-const redirectsContent = `/admin    /admin/index.html   200
-/admin/*  /admin/index.html   200
-/*        /index.html         200
+const redirectsContent = `/auth-callback.html  /auth-callback.html  200
+/auth-callback       /auth-callback.html  200
+/privacidad.html     /privacidad.html     200
+/admin               /admin/index.html    200
+/admin/*             /admin/index.html    200
+/*                   /index.html          200
 `;
 fs.writeFileSync(path.join(rootDist, '_redirects'), redirectsContent, 'utf8');
 
