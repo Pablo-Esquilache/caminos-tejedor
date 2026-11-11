@@ -22,6 +22,7 @@ import {
   Edit3,
   Merge,
   Sliders,
+  Wrench,
 } from 'lucide-react';
 import {
   ROAD_CLASS_LABELS,
@@ -35,6 +36,7 @@ import { AdminMap } from './components/AdminMap';
 import { AdminClaimsSection } from './components/AdminClaimsSection';
 import { AdminStatsSection } from './components/AdminStatsSection';
 import { AdminFieldRecorderModal } from './components/AdminFieldRecorderModal';
+import { AdminInterventionsSection } from './components/AdminInterventionsSection';
 
 type AdminSection =
   | 'dashboard'
@@ -42,6 +44,7 @@ type AdminSection =
   | 'trips'
   | 'roads'
   | 'claims'
+  | 'interventions'
   | 'users'
   | 'stats';
 
@@ -134,6 +137,7 @@ export const App: React.FC = () => {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showRecorderModal, setShowRecorderModal] = useState(false);
   const [newClaimsCount, setNewClaimsCount] = useState(0);
+  const [pendingInterventionsCount, setPendingInterventionsCount] = useState(0);
 
   // Portada / Indicadores
   const [summary, setSummary] = useState<DashboardSummary>({
@@ -285,6 +289,13 @@ export const App: React.FC = () => {
     const { data, error } = await supabase.rpc('get_admin_dashboard_summary');
     if (!error && data) {
       setSummary(data as DashboardSummary);
+    }
+    const { count: pendInt } = await supabase
+      .from('interventions')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending_approval');
+    if (typeof pendInt === 'number') {
+      setPendingInterventionsCount(pendInt);
     }
   };
 
@@ -739,6 +750,21 @@ export const App: React.FC = () => {
 
           <button
             type="button"
+            className={section === 'interventions' ? 'side-link active' : 'side-link'}
+            onClick={() => {
+              setDetailTripId(null);
+              setSection('interventions');
+            }}
+          >
+            <Wrench size={18} />
+            <span>Intervenciones</span>
+            {pendingInterventionsCount > 0 && (
+              <span className="side-badge">{pendingInterventionsCount}</span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={section === 'users' ? 'side-link active' : 'side-link'}
             onClick={() => {
               setDetailTripId(null);
@@ -857,6 +883,15 @@ export const App: React.FC = () => {
                   {Number(summary.approved_km).toLocaleString('es-AR')} km
                 </strong>
                 <span className="kpi-sub">Ver red consolidada y clasificación →</span>
+              </div>
+
+              <div
+                className="kpi-card"
+                onClick={() => setSection('interventions')}
+              >
+                <span className="kpi-title">Trabajos viales por validar</span>
+                <strong className="kpi-number">{pendingInterventionsCount}</strong>
+                <span className="kpi-sub">Programar obras, catálogos y aprobar trabajos →</span>
               </div>
             </div>
 
@@ -1589,6 +1624,23 @@ export const App: React.FC = () => {
                 En la Fase 5 se habilita el alta y gestión de reclamos con fotos privadas, prioridades y avisos por email vía Brevo.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* SECCIÓN INTERVENCIONES VIALES Y CATÁLOGOS (FASES 9, 10 Y 13) */}
+        {section === 'interventions' && (
+          <div className="admin-page">
+            <div className="page-header">
+              <div>
+                <h1>Intervenciones Viales, Flota y Operarios</h1>
+                <p>Programación de obras, catálogos municipales y validación de trabajos en campo</p>
+              </div>
+            </div>
+            <AdminInterventionsSection
+              roads={roadsList}
+              onPendingCountChange={(cnt) => setPendingInterventionsCount(cnt)}
+              onToast={(msg) => showToast(msg)}
+            />
           </div>
         )}
 

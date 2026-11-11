@@ -13,6 +13,8 @@ import {
   CLAIM_PRIORITY_LABELS,
   CLAIM_STATUS_LABELS,
   ROAD_CLASS_LABELS,
+  MACHINE_TYPE_LABELS,
+  type MachineType,
   type ClaimPriority,
   type ClaimStatus,
   type RoadClass,
@@ -82,6 +84,7 @@ export const AdminStatsSection: React.FC = () => {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [stats, setStats] = useState<StatsData | null>(null);
+  const [intStats, setIntStats] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
   const loadStatistics = async (fromVal = dateFrom, toVal = dateTo) => {
@@ -92,6 +95,13 @@ export const AdminStatsSection: React.FC = () => {
     });
     if (!error && data) {
       setStats(data as StatsData);
+    }
+    const { data: intData } = await supabase.rpc('get_intervention_statistics', {
+      p_date_from: fromVal ? new Date(`${fromVal}T00:00:00`).toISOString() : null,
+      p_date_to: toVal ? new Date(`${toVal}T23:59:59`).toISOString() : null,
+    });
+    if (intData) {
+      setIntStats(intData);
     }
     setLoading(false);
   };
@@ -491,6 +501,128 @@ export const AdminStatsSection: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Fase 14: Estadísticas de Intervenciones Viales (Sin rankings nominales de operarios) */}
+      {intStats && (
+        <div style={{ marginTop: 22 }}>
+          <h3 style={{ marginBottom: 10 }}>
+            Indicadores de Intervenciones y Maquinaria Municipal
+          </h3>
+
+          <div className="kpi-grid" style={{ marginBottom: 16 }}>
+            <div className="kpi-card">
+              <div className="kpi-label">Obras Aprobadas</div>
+              <div className="kpi-value">{intStats.kpis?.approved_interventions ?? 0}</div>
+              <small>
+                {intStats.kpis?.pending_approval_interventions ?? 0} pendientes de validación
+              </small>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Km Netos Trabajados</div>
+              <div className="kpi-value">{intStats.kpis?.total_worked_km ?? 0} km</div>
+              <small>Deduplicado (sin sumar pasadas repetidas)</small>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">En Ejecución / Pausa</div>
+              <div className="kpi-value">{intStats.kpis?.suspended_interventions ?? 0}</div>
+              <small>{intStats.kpis?.planned_interventions ?? 0} planificadas</small>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Reclamos Resueltos por Obra</div>
+              <div className="kpi-value">
+                {intStats.kpis?.claims_resolved_by_interventions ?? 0}
+              </div>
+              <small>Vinculados al finalizar trabajos</small>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: 16,
+            }}
+          >
+            <div className="panel-card">
+              <h4 style={{ marginTop: 0 }}>Km Trabajados por Tipo de Obra</h4>
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Tipo de Trabajo</th>
+                      <th>Obras Aprobadas</th>
+                      <th>Km Netos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(intStats.by_work_type || []).map((w: any) => (
+                      <tr key={w.id}>
+                        <td>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 10,
+                              height: 10,
+                              borderRadius: '50%',
+                              background: w.color,
+                              marginRight: 6,
+                            }}
+                          />
+                          <strong>{w.name}</strong>
+                        </td>
+                        <td>{w.approved_count}</td>
+                        <td>
+                          <strong>{w.worked_km} km</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="panel-card">
+              <h4 style={{ marginTop: 0 }}>Uso de Maquinaria Municipal</h4>
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Máquina</th>
+                      <th>Tipo</th>
+                      <th>Obras</th>
+                      <th>Km Trabajados</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(intStats.by_machine || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="empty-cell">
+                          Sin maquinarias cargadas en el catálogo.
+                        </td>
+                      </tr>
+                    ) : (
+                      (intStats.by_machine || []).map((m: any) => (
+                        <tr key={m.id}>
+                          <td>
+                            <strong>{m.name}</strong> {m.code ? `(${m.code})` : ''}
+                          </td>
+                          <td>
+                            {MACHINE_TYPE_LABELS[m.machine_type as MachineType] || m.machine_type}
+                          </td>
+                          <td>{m.interventions_count}</td>
+                          <td>
+                            <strong>{m.worked_km} km</strong>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

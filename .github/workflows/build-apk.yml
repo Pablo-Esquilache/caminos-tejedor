@@ -1,11 +1,6 @@
 name: Build Android APK (Capacitor)
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'apps/mobile/**'
-      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 permissions:

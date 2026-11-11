@@ -1,6 +1,6 @@
 # Plan de Acción y Estado de Implementación — Caminos Rurales de Carlos Tejedor
 
-> **Estado actual del proyecto (Noviembre 2026):** Las **Fases 1 a 7 están 100% completadas, probadas y desplegadas en producción** (Supabase + PostGIS, GitHub y Netlify). Este documento registra la arquitectura vigente, las Fases 1 a 7 cerradas, y la **Ampliación de Intervenciones Viales y Rol Operario (Fases 9 a 14) combinada con la Fase 8 (Capacitor / App Nativa para Android e iOS)**.
+> **Estado actual del proyecto (Noviembre 2026):** Las **Fases 1 a 7 y el Módulo Completo de Operario e Intervenciones Viales (Fases 9 a 14)** están **100% implementados, migrados en Supabase + PostGIS, validados con 6 suites de pruebas SQL y desplegados en Web/PWA (Netlify)**. La **Fase 8 (APK Nativo Android)** se mantiene estable en su release compilado (`v1.0.0-apk`) mientras se valida el nuevo módulo en Web/PWA (el workflow de APK quedó en ejecución manual para no sobreescribir el paquete actual).
 
 ---
 

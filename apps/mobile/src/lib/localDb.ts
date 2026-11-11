@@ -1,7 +1,15 @@
-import type { ClaimCategory, RawGpsPoint } from '@shared';
+import type {
+  ClaimCategory,
+  InterventionSummary,
+  MachineItem,
+  OperatorItem,
+  RawGpsPoint,
+  WorkExecutionMode,
+  WorkTypeItem,
+} from '@shared';
 
 const DB_NAME = 'caminos_tejedor_local_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export interface ActiveRecordingSession {
   id: string; // 'current'
@@ -48,6 +56,38 @@ export interface PendingClaimOutboxItem {
   created_at: string;
 }
 
+export interface PendingInterventionOutboxItem {
+  session_id: string;
+  intervention_id: string | null;
+  action: 'suspend' | 'submit';
+  execution_mode: WorkExecutionMode;
+  title: string | null;
+  description: string | null;
+  started_at: string;
+  ended_at: string;
+  raw_points: RawGpsPoint[];
+  raw_distance_m: number;
+  duration_s: number;
+  punctual_lat: number | null;
+  punctual_lon: number | null;
+  work_type_ids: string[] | null;
+  machine_ids: string[] | null;
+  participant_operator_ids: string[] | null;
+  linked_claim_id: string | null;
+  photo_blobs: Array<{ photoBlob: Blob; thumbBlob: Blob }>;
+  notes: string | null;
+  status: 'pending_sync' | 'syncing' | 'error';
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface StaffCatalogsCache {
+  id: 'current';
+  work_types: WorkTypeItem[];
+  machines: MachineItem[];
+  operators: OperatorItem[];
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -64,6 +104,15 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('cached_categories')) {
         db.createObjectStore('cached_categories', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('cached_operator_tasks')) {
+        db.createObjectStore('cached_operator_tasks', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('cached_staff_catalogs')) {
+        db.createObjectStore('cached_staff_catalogs', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('outbox_interventions')) {
+        db.createObjectStore('outbox_interventions', { keyPath: 'session_id' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -268,6 +317,135 @@ export async function getCachedCategories(): Promise<ClaimCategory[]> {
     req.onerror = () => {
       db.close();
       reject(req.error);
+    };
+  });
+}
+
+
+/**
+ * Caché offline de tareas asignadas y catálogos para el Operario Vial (Fase 11)
+ */
+export async function saveCachedOperatorTasks(tasks: InterventionSummary[]): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_operator_tasks', 'readwrite');
+    const store = tx.objectStore('cached_operator_tasks');
+    store.clear();
+    for (const t of tasks) {
+      store.put(t);
+    }
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function getCachedOperatorTasks(): Promise<InterventionSummary[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_operator_tasks', 'readonly');
+    const req = tx.objectStore('cached_operator_tasks').getAll();
+    req.onsuccess = () => {
+      db.close();
+      resolve((req.result as InterventionSummary[]) || []);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
+  });
+}
+
+export async function saveCachedStaffCatalogs(
+  catalogs: Omit<StaffCatalogsCache, 'id'>
+): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_staff_catalogs', 'readwrite');
+    tx.objectStore('cached_staff_catalogs').put({ id: 'current', ...catalogs });
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function getCachedStaffCatalogs(): Promise<StaffCatalogsCache | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_staff_catalogs', 'readonly');
+    const req = tx.objectStore('cached_staff_catalogs').get('current');
+    req.onsuccess = () => {
+      db.close();
+      resolve((req.result as StaffCatalogsCache) || null);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
+  });
+}
+
+/**
+ * Cola offline de sesiones y trabajos viales pendientes de sincronización (Fase 13)
+ */
+export async function saveInterventionToOutbox(
+  item: PendingInterventionOutboxItem
+): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('outbox_interventions', 'readwrite');
+    tx.objectStore('outbox_interventions').put(item);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function listOutboxInterventions(): Promise<PendingInterventionOutboxItem[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('outbox_interventions', 'readonly');
+    const req = tx.objectStore('outbox_interventions').getAll();
+    req.onsuccess = () => {
+      db.close();
+      const items = (req.result as PendingInterventionOutboxItem[]) || [];
+      items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+      resolve(items);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
+  });
+}
+
+export async function removeInterventionFromOutbox(sessionId: string): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('outbox_interventions', 'readwrite');
+    tx.objectStore('outbox_interventions').delete(sessionId);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
     };
   });
 }

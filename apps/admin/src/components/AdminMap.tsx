@@ -7,6 +7,9 @@ import {
   ROAD_CLASS_LABELS,
   type ClaimPriority,
   type ClaimStatus,
+  INTERVENTION_STATUS_LABELS,
+  type InterventionStatus,
+  type MapInterventionFeature,
   type RoadClass,
 } from '@shared';
 import { supabase } from '../lib/supabase';
@@ -75,6 +78,8 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
   const [showConsolidatedRoads, setShowConsolidatedRoads] = useState(true);
   const [showClaimsLayer, setShowClaimsLayer] = useState(true);
+  const [showInterventionsLayer, setShowInterventionsLayer] = useState(true);
+  const [visibleInterventionsCount, setVisibleInterventionsCount] = useState(0);
   const [showApproved, setShowApproved] = useState(false);
   const [showPending, setShowPending] = useState(true);
   const [visibleCount, setVisibleCount] = useState(0);
@@ -126,7 +131,26 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       updateClaimsClusterLayer(map, []);
     }
 
-    // 3. Cargar Recorridos individuales (aprobados / pendientes)
+    // 3. Cargar Capa Independiente de Intervenciones Viales (Obras municipales)
+    if (showInterventionsLayer) {
+      const { data: intData } = await supabase.rpc('get_map_interventions_geojson', {
+        p_min_lon: bounds.getWest(),
+        p_min_lat: bounds.getSouth(),
+        p_max_lon: bounds.getEast(),
+        p_max_lat: bounds.getNorth(),
+        p_include_planned: true,
+      });
+      if (Array.isArray(intData)) {
+        const list = intData as MapInterventionFeature[];
+        setVisibleInterventionsCount(list.length);
+        updateInterventionsLayer(map, list);
+      }
+    } else {
+      setVisibleInterventionsCount(0);
+      updateInterventionsLayer(map, []);
+    }
+
+    // 4. Cargar Recorridos individuales (aprobados / pendientes)
     const statuses: string[] = [];
     if (showApproved) statuses.push('approved');
     if (showPending) statuses.push('pending');
@@ -151,6 +175,119 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       const items = data as MapTripFeature[];
       setVisibleCount(items.length);
       updateGeneralLayers(map, items);
+    }
+  };
+
+  const updateInterventionsLayer = (
+    map: maplibregl.Map,
+    interventions: MapInterventionFeature[]
+  ) => {
+    if (!map.isStyleLoaded()) return;
+
+    const fc: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: interventions
+        .filter((i) => i.geojson)
+        .map((i) => {
+          const wtColor = i.work_types?.[0]?.color || '#7c3aed';
+          return {
+            type: 'Feature',
+            properties: {
+              id: i.id,
+              title: i.title,
+              status: i.status,
+              execution_mode: i.execution_mode,
+              worked_length_m: i.worked_length_m,
+              planned_length_m: i.planned_length_m,
+              color: wtColor,
+              work_types_text: (i.work_types || []).map((w) => w.name).join(', '),
+              machines_text: (i.machines || []).map((m) => m.name).join(', '),
+              road_name: i.road_name || '',
+            },
+            geometry: i.geojson,
+          };
+        }),
+    };
+
+    const existing = map.getSource('interventions-layer') as maplibregl.GeoJSONSource | undefined;
+    if (existing) {
+      existing.setData(fc);
+    } else {
+      map.addSource('interventions-layer', { type: 'geojson', data: fc });
+
+      // Trabajos lineales aprobados (sólido)
+      map.addLayer({
+        id: 'interventions-linear-approved',
+        type: 'line',
+        source: 'interventions-layer',
+        filter: ['all', ['!=', '$type', 'Point'], ['==', 'status', 'approved']],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': 5,
+          'line-opacity': 0.9,
+        },
+      });
+
+      // Trabajos lineales programados / en ejecución / por aprobar (punteado)
+      map.addLayer({
+        id: 'interventions-linear-active',
+        type: 'line',
+        source: 'interventions-layer',
+        filter: ['all', ['!=', '$type', 'Point'], ['!=', 'status', 'approved']],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#f59e0b',
+          'line-width': 4,
+          'line-dasharray': [2, 2],
+        },
+      });
+
+      // Trabajos puntuales (alcantarillas / bacheo)
+      map.addLayer({
+        id: 'interventions-punctual-pts',
+        type: 'circle',
+        source: 'interventions-layer',
+        filter: ['==', '$type', 'Point'],
+        paint: {
+          'circle-radius': 8,
+          'circle-color': ['get', 'color'],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      const showIntPopup = (e: maplibregl.MapLayerMouseEvent) => {
+        const feat = e.features?.[0];
+        if (!feat || !feat.properties) return;
+        const p = feat.properties;
+        const stLabel =
+          INTERVENTION_STATUS_LABELS[p.status as InterventionStatus] || String(p.status);
+        const lenStr =
+          p.execution_mode === 'punctual'
+            ? 'Obra puntual georreferenciada'
+            : Number(p.worked_length_m) > 0
+              ? `Trabajado neto: ${formatDistance(Number(p.worked_length_m))}`
+              : `Planificado: ${formatDistance(Number(p.planned_length_m || 0))}`;
+
+        const popupNode = document.createElement('div');
+        popupNode.className = 'map-popup-box';
+        popupNode.innerHTML = `
+          <strong>🚧 ${p.title}</strong>
+          <div>Estado: <b>${stLabel}</b></div>
+          ${p.work_types_text ? `<div>Obra: ${p.work_types_text}</div>` : ''}
+          ${p.machines_text ? `<div>Equipo: ${p.machines_text}</div>` : ''}
+          <div>${lenStr}</div>
+        `;
+        new maplibregl.Popup({ closeButton: true })
+          .setLngLat(e.lngLat)
+          .setDOMContent(popupNode)
+          .addTo(map);
+      };
+
+      map.on('click', 'interventions-linear-approved', showIntPopup);
+      map.on('click', 'interventions-linear-active', showIntPopup);
+      map.on('click', 'interventions-punctual-pts', showIntPopup);
     }
   };
 
@@ -701,6 +838,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   }, [
     showConsolidatedRoads,
     showClaimsLayer,
+    showInterventionsLayer,
     showApproved,
     showPending,
     singleRouteCoords,
@@ -745,6 +883,17 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             />
             <span className="legend-dot pending" />
             <span>Recorridos pendientes de revisión</span>
+          </label>
+          <label className="layer-check">
+            <input
+              type="checkbox"
+              checked={showInterventionsLayer}
+              onChange={(e) => setShowInterventionsLayer(e.target.checked)}
+            />
+            <span className="legend-dot" style={{ background: '#7c3aed' }} />
+            <span>
+              <strong>Intervenciones Viales</strong> ({visibleInterventionsCount} en vista)
+            </span>
           </label>
           <label className="layer-check">
             <input

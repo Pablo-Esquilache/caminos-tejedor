@@ -19,11 +19,12 @@ import {
   ChevronRight,
   ArrowLeft,
   Compass,
-  AlertTriangle, Map as MapIcon, Bell, MessageSquareWarning,
+  AlertTriangle, Map as MapIcon, Bell, MessageSquareWarning, Wrench,
 } from 'lucide-react';
 import {
   isPointInsideCarlosTejedor,
   TRIP_STATUS_USER_LABELS,
+  type AppUserRole,
   type RawGpsPoint,
   type TripStatus,
   type TripSummary, type NotificationItem,
@@ -51,6 +52,7 @@ import { RouteMap } from './components/RouteMap';
 import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
 import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSection';
 import { NotificationsView } from './components/NotificationsView';
+import { OperatorWorkspace } from './components/OperatorWorkspace';
 
 // Interfaz para el plugin nativo de Servicio en Primer Plano (Foreground Service)
 interface BackgroundGpsPlugin {
@@ -99,6 +101,8 @@ export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userRole, setUserRole] = useState<AppUserRole>('user');
+  const [pendingInterventionsCount, setPendingInterventionsCount] = useState(0);
 
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showMunicipalLogin, setShowMunicipalLogin] = useState(false);
@@ -107,7 +111,7 @@ export const App: React.FC = () => {
   const [loggingInPassword, setLoggingInPassword] = useState(false);
 
   // Navegación principal
-  const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map' | 'claims' | 'notifications'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'trips' | 'map' | 'claims' | 'notifications' | 'tasks'>('record');
   const [claimIdToOpen, setClaimIdToOpen] = useState<string | null>(null);
   const [outboxClaimsCount, setOutboxClaimsCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -228,15 +232,34 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Verificar si el usuario autenticado es Administrador y cargar sesión local recuperada
+  // Detectar rol del usuario autenticado (admin / operator / user) y recuperar sesión local
   useEffect(() => {
     if (!session?.user) {
       setIsAdmin(false);
+      setUserRole('user');
       return;
     }
 
-    supabase.rpc('is_admin').then(({ data }) => {
-      setIsAdmin(Boolean(data));
+    const roleCacheKey = `caminos_role_${session.user.id}`;
+    const cachedRole = localStorage.getItem(roleCacheKey) as AppUserRole | null;
+    if (cachedRole) {
+      setUserRole(cachedRole);
+      setIsAdmin(cachedRole === 'admin');
+      if (cachedRole === 'operator') setActiveTab('tasks');
+    }
+
+    supabase.rpc('get_my_role').then(({ data, error }) => {
+      if (!error && data) {
+        const resolvedRole = data as AppUserRole;
+        localStorage.setItem(roleCacheKey, resolvedRole);
+        setUserRole(resolvedRole);
+        setIsAdmin(resolvedRole === 'admin');
+        if (resolvedRole === 'operator') {
+          setActiveTab('tasks');
+        } else if (activeTab === 'tasks') {
+          setActiveTab('record');
+        }
+      }
     });
 
     // Recuperar grabación activa si la app se cerró a mitad del camino
@@ -1129,6 +1152,21 @@ export const App: React.FC = () => {
                 </button>
               </>
             )}
+            {userRole === 'operator' && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  background: '#2563eb',
+                  color: '#ffffff',
+                  fontSize: '10px',
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  fontWeight: 700,
+                }}
+              >
+                OPERARIO
+              </span>
+            )}
         </div>
         <div className="inline-btns">
           <button
@@ -1658,6 +1696,13 @@ export const App: React.FC = () => {
             />
           </div>
         )}
+        {activeTab === 'tasks' && (
+          <OperatorWorkspace
+            userId={session.user.id}
+            isOnline={isOnline}
+            onSyncPendingChange={(cnt) => setPendingInterventionsCount(cnt)}
+          />
+        )}
         {activeTab === 'notifications' && (
           <div className="tab-pane">
             <NotificationsView
@@ -1673,6 +1718,50 @@ export const App: React.FC = () => {
 
       {/* Barra de Navegación Inferior */}
       <nav className="bottom-nav">
+        {userRole === 'operator' ? (
+          <>
+            <button
+              type="button"
+              className={activeTab === 'tasks' ? 'nav-item active' : 'nav-item'}
+              onClick={() => setActiveTab('tasks')}
+            >
+              <div className="nav-icon-wrap">
+                <Wrench size={20} />
+                {pendingInterventionsCount > 0 && (
+                  <span className="nav-unread-badge">{pendingInterventionsCount}</span>
+                )}
+              </div>
+              <span>Mis Tareas</span>
+            </button>
+            <button
+              type="button"
+              className={activeTab === 'map' ? 'nav-item active' : 'nav-item'}
+              onClick={() => setActiveTab('map')}
+            >
+              <MapIcon size={20} />
+              <span>Mapa</span>
+            </button>
+            <button
+              type="button"
+              className={activeTab === 'notifications' ? 'nav-item active' : 'nav-item'}
+              onClick={() => {
+                loadNotifications();
+                setActiveTab('notifications');
+              }}
+            >
+              <div className="nav-icon-wrap">
+                <Bell size={20} />
+                {notifications.filter((n) => !n.is_read).length > 0 && (
+                  <span className="nav-unread-badge">
+                    {notifications.filter((n) => !n.is_read).length}
+                  </span>
+                )}
+              </div>
+              <span>Avisos</span>
+            </button>
+          </>
+        ) : (
+          <>
         <button
           type="button"
           className={activeTab === 'record' ? 'nav-item active' : 'nav-item'}
@@ -1726,6 +1815,8 @@ export const App: React.FC = () => {
           </div>
           <span>Avisos</span>
         </button>
+          </>
+        )}
       </nav>
     </div>
   );
