@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { Navigation, Pause, Play, ShieldCheck, Square, X } from 'lucide-react';
-import { CARLOS_TEJEDOR_CENTER, type RawGpsPoint, type RoadClass, ROAD_CLASS_LABELS } from '@shared';
+import { Clock, Navigation, Pause, Play, ShieldCheck, Square, X } from 'lucide-react';
+import {
+  CARLOS_TEJEDOR_CENTER,
+  isPointInsideCarlosTejedor,
+  type RawGpsPoint,
+  type RoadClass,
+  ROAD_CLASS_LABELS,
+} from '@shared';
 import {
   DEFAULT_MAX_GPS_ACCURACY_M,
   SAMPLE_TEJEDOR_ROUTES,
@@ -35,6 +41,11 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Temporizador de seguridad de 1 hora
+  const [showHourlyPrompt, setShowHourlyPrompt] = useState(false);
+  const hourlyPromptDoneForHourRef = useRef<number>(0);
+  const highSpeedStartRef = useRef<number | null>(null);
+
   const simStepRef = useRef(0);
   const simTimerRef = useRef<number | null>(null);
   const watchIdRef = useRef<number | null>(null);
@@ -50,11 +61,24 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
 
   useEffect(() => {
     const timer = window.setInterval(() => {
+      let totalSec = 0;
       if (status === 'recording' && lastResumedAt !== null) {
         const totalMs = accumulatedMs + (Date.now() - lastResumedAt);
-        setElapsedSeconds(Math.floor(totalMs / 1000));
+        totalSec = Math.floor(totalMs / 1000);
+        setElapsedSeconds(totalSec);
       } else {
-        setElapsedSeconds(Math.floor(accumulatedMs / 1000));
+        totalSec = Math.floor(accumulatedMs / 1000);
+        setElapsedSeconds(totalSec);
+      }
+
+      // Temporizador de seguridad de 1 hora continua (3600 seg)
+      if (status === 'recording' && totalSec >= 3600) {
+        const hourCount = Math.floor(totalSec / 3600);
+        if (hourCount > hourlyPromptDoneForHourRef.current) {
+          hourlyPromptDoneForHourRef.current = hourCount;
+          handlePause();
+          setShowHourlyPrompt(true);
+        }
       }
     }, 500);
     return () => window.clearInterval(timer);
@@ -131,6 +155,29 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
 
   const pushPoint = (pt: RawGpsPoint) => {
     if (statusRef.current !== 'recording') return;
+
+    // 1. Filtro geográfico del Partido de Carlos Tejedor (con 3 km de tolerancia)
+    if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
+      handlePause();
+      setErrorMsg('Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.');
+      return;
+    }
+
+    // 2. Filtro de velocidad sostenida en ruta (30 minutos a > 100 km/h)
+    const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
+    if (speedKmH != null && speedKmH > 100) {
+      if (highSpeedStartRef.current === null) {
+        highSpeedStartRef.current = Date.now();
+      } else if (Date.now() - highSpeedStartRef.current >= 30 * 60 * 1000) {
+        handlePause();
+        setErrorMsg('Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 min). Grabación pausada preventivamente.');
+        highSpeedStartRef.current = null;
+        return;
+      }
+    } else if (speedKmH != null && speedKmH < 90) {
+      highSpeedStartRef.current = null;
+    }
+
     if (pt.accuracy !== null && pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) return;
 
     const prevPts = pointsRef.current;
@@ -199,6 +246,9 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
   const handleStart = () => {
     setErrorMsg(null);
     simStepRef.current = 0;
+    hourlyPromptDoneForHourRef.current = 0;
+    highSpeedStartRef.current = null;
+    setShowHourlyPrompt(false);
     pointsRef.current = [];
     distRef.current = 0;
     setPoints([]);
@@ -499,6 +549,80 @@ export const AdminFieldRecorderModal: React.FC<AdminFieldRecorderModalProps> = (
               </button>
             </div>
           </form>
+        )}
+        {/* Modal de confirmación tras 1 hora continua (Temporizador de seguridad) */}
+        {showHourlyPrompt && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.65)',
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                background: '#ffffff',
+                borderRadius: 16,
+                padding: 24,
+                maxWidth: 400,
+                width: '100%',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)',
+                textAlign: 'center',
+              }}
+            >
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: '50%',
+                  background: '#fef3c7',
+                  color: '#d97706',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                }}
+              >
+                <Clock size={32} />
+              </div>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: 18, color: '#1e293b' }}>
+                ¿Seguís en el camino?
+              </h3>
+              <p style={{ margin: '0 0 20px 0', fontSize: 14, color: '#64748b', lineHeight: 1.5 }}>
+                Llevás <strong>1 hora continua</strong> grabando. Pausamos el GPS preventivamente para cuidar la batería.
+                ¿Querés continuar grabando o guardar lo recorrido hasta acá?
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <button
+                  type="button"
+                  className="btn-approve"
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => {
+                    setShowHourlyPrompt(false);
+                    handleResume();
+                  }}
+                >
+                  <Play size={18} /> Sí, seguir grabando
+                </button>
+                <button
+                  type="button"
+                  className="btn-reject"
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => {
+                    setShowHourlyPrompt(false);
+                    handleFinishToConfirm();
+                  }}
+                >
+                  <Square size={18} /> No, guardar recorrido
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

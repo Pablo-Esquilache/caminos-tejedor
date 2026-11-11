@@ -41,6 +41,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Servicio Nativo en Primer Plano para Grabación GPS con pantalla bloqueada -->
+        <service
+            android:name=".LocationService"
+            android:foregroundServiceType="location"
+            android:exported="false" />
     </application>
 
     <!-- Queries para permitir abrir el navegador del sistema (Chrome Custom Tabs) -->

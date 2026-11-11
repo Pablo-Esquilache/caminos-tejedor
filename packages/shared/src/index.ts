@@ -155,3 +155,6 @@ export interface NotificationItem {
   email_error: string | null;
   created_at: string;
 }
+
+// Delimitación geográfica oficial y validación espacial del Partido de Carlos Tejedor
+export * from './boundary';

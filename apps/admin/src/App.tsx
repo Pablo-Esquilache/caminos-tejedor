@@ -391,7 +391,9 @@ export const App: React.FC = () => {
         'Aprobación revocada: se desconsolidó de la red y volvió a estado Pendiente.',
     };
     showToast(actionLabels[newStatus]);
-    await openTripDetail(detailData.id);
+    setDetailTripId(null);
+    setDetailData(null);
+    setReviewNote('');
     await loadDashboardSummary();
     await loadTrips(tripsPage);
     await loadRoads(roadsPage);

@@ -64,8 +64,11 @@ Una única aplicación instalable en teléfonos móviles que atiende a todos los
     * Generación del instalador **`.apk`** de prueba directa (descargable por enlace o WhatsApp) y paquete **`.aab`** para **Google Play Console** (\$25 USD pago único).
     * **Deep Linking OAuth:** Integración de `@capacitor/app` y `@capacitor/browser` con esquema `com.caminosrurales.tejedor://login-callback` para que el inicio de sesión con Google en Chrome devuelva automáticamente los tokens a la app instalada.
     * **Safe Area Insets:** Adaptación visual en CSS (`env(safe-area-inset-top)` y `env(safe-area-inset-bottom)`) para evitar solapamientos con la barra de estado y los controles de navegación de Android.
-    * **Muestreo GPS de Alta Resolución:** Muestreo cada 1-2s con pantalla activa y cada 2.5s con pantalla bloqueada mediante temporizador reforzado, garantizando el registro de curvas y esquinas pronunciadas a 90° típicas de caminos rurales sin corte de líneas rectas.
-    * **Herramienta Utilitaria para Administrador:** Grabación de caminos con auto-aprobación en el campo y botón directo *"Panel Web ↗"* para acceder a la gestión completa en el navegador.
+    * **Segundo Plano Garantizado (Foreground Service Nativo):** Servicio en primer plano nativo (`LocationService`) con notificación persistente y `WakeLock` para que Android Doze Mode no corte la toma de puntos cada 2 segundos con la pantalla bloqueada en el bolsillo.
+    * **Límite Geográfico Oficial de Carlos Tejedor:** Geofence con el polígono oficial del partido (IGN / INDEC) y margen de tolerancia de 3 km para caminos limítrofes.
+    * **Temporizador de Seguridad de 1 Hora y Filtro de Velocidad Sostenida:** Pausa preventiva con diálogo interactivo a los 60 min y detección de viajes en ruta (> 100 km/h por más de 30 min) compartidos en toda la plataforma (App y Web).
+    * **Retorno Automático en Panel Web:** Validación ágil de recorridos que regresa de inmediato a la lista tras aprobar o rechazar.
+    * **Herramienta Utilitaria para Administrador:** Grabación de caminos con auto-aprobación en el campo y botón directo *"Panel Web ↗"* con SSO handoff para acceder a la gestión completa en el navegador.
   * **Para iOS (iPhone):** Generación del proyecto nativo en `/ios`. Compilación con **Xcode** (usando una Mac o servicio de compilación en la nube como GitHub Actions / Codemagic) para generar el archivo firmado para **Apple App Store Connect** (\$99 USD/año).
   * **Segundo Plano Garantizado:** Configuración de `FOREGROUND_SERVICE` y permisos de ubicación en segundo plano para que el GPS no se corte con la pantalla apagada.
 

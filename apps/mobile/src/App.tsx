@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { App as CapApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import {
   MapPin,
@@ -22,6 +22,7 @@ import {
   AlertTriangle, Map as MapIcon, Bell, MessageSquareWarning,
 } from 'lucide-react';
 import {
+  isPointInsideCarlosTejedor,
   TRIP_STATUS_USER_LABELS,
   type RawGpsPoint,
   type TripStatus,
@@ -50,6 +51,46 @@ import { RouteMap } from './components/RouteMap';
 import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
 import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSection';
 import { NotificationsView } from './components/NotificationsView';
+
+// Interfaz para el plugin nativo de Servicio en Primer Plano (Foreground Service)
+interface BackgroundGpsPlugin {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  addListener(
+    eventName: 'onLocation',
+    listenerFunc: (loc: {
+      latitude: number;
+      longitude: number;
+      accuracy: number;
+      altitude?: number | null;
+      speed?: number | null;
+      timestamp: number;
+    }) => void
+  ): Promise<any>;
+}
+
+const BackgroundGps = registerPlugin<BackgroundGpsPlugin>('BackgroundGps');
+
+function playAlertTone() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch {
+    // Audio no soportado o bloqueado
+  }
+}
 
 const PAGE_SIZE = 20;
 const PERMISSION_EXPLAINED_KEY = 'caminos_tejedor_gps_explained_v1';
@@ -83,6 +124,14 @@ export const App: React.FC = () => {
     () => localStorage.getItem(PERMISSION_EXPLAINED_KEY) === 'true'
   );
   const [showPermissionModal, setShowPermissionModal] = useState(false);
+
+  // Temporizador de seguridad de 1 hora (60 minutos)
+  const [showHourlyPrompt, setShowHourlyPrompt] = useState(false);
+  const hourlyPromptDoneForHourRef = useRef<number>(0);
+
+  // Filtro de velocidad sostenida en ruta (30 minutos a > 100 km/h)
+  const highSpeedStartRef = useRef<number | null>(null);
+  const nativeBgListenerRef = useRef<any>(null);
 
   // Estado de grabación de recorrido
   const [recordingSession, setRecordingSession] = useState<ActiveRecordingSession | null>(null);
@@ -235,7 +284,7 @@ export const App: React.FC = () => {
     };
   }, [session?.user?.id]);
 
-  // 3. Reloj de duración efectiva (ignora el tiempo en pausa)
+  // 3. Reloj de duración efectiva (ignora el tiempo en pausa) y temporizador de seguridad de 1 hora
   useEffect(() => {
     const timer = window.setInterval(() => {
       const cur = sessionRef.current;
@@ -243,11 +292,28 @@ export const App: React.FC = () => {
         setElapsedSeconds(0);
         return;
       }
+      let totalSec = 0;
       if (cur.status === 'recording' && cur.lastResumedAt) {
         const totalMs = cur.accumulatedDurationMs + (Date.now() - cur.lastResumedAt);
-        setElapsedSeconds(Math.floor(totalMs / 1000));
+        totalSec = Math.floor(totalMs / 1000);
+        setElapsedSeconds(totalSec);
       } else {
-        setElapsedSeconds(Math.floor(cur.accumulatedDurationMs / 1000));
+        totalSec = Math.floor(cur.accumulatedDurationMs / 1000);
+        setElapsedSeconds(totalSec);
+      }
+
+      // Temporizador de seguridad: cada 1 hora continua (3600 seg)
+      if (cur.status === 'recording' && totalSec >= 3600) {
+        const hourCount = Math.floor(totalSec / 3600);
+        if (hourCount > hourlyPromptDoneForHourRef.current) {
+          hourlyPromptDoneForHourRef.current = hourCount;
+          pauseRecording();
+          setShowHourlyPrompt(true);
+          playAlertTone();
+          if (navigator.vibrate) {
+            navigator.vibrate([400, 200, 400]);
+          }
+        }
       }
     }, 500);
 
@@ -350,6 +416,15 @@ export const App: React.FC = () => {
   };
 
   const stopGpsWatchers = () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        BackgroundGps.stop();
+      } catch {}
+      if (nativeBgListenerRef.current?.remove) {
+        nativeBgListenerRef.current.remove();
+        nativeBgListenerRef.current = null;
+      }
+    }
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -376,7 +451,33 @@ export const App: React.FC = () => {
 
     setLastAccuracy(Math.round(pt.accuracy));
 
-    // Filtrar puntos con precisión muy mala (> umbral configurable)
+    // 1. Filtro geográfico oficial del Partido de Carlos Tejedor (con margen de 3 km)
+    if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
+      pauseRecording();
+      setGpsError(
+        'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.'
+      );
+      return;
+    }
+
+    // 2. Filtro de velocidad sostenida en ruta (30 minutos continuos a > 100 km/h)
+    const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
+    if (speedKmH != null && speedKmH > 100) {
+      if (highSpeedStartRef.current === null) {
+        highSpeedStartRef.current = Date.now();
+      } else if (Date.now() - highSpeedStartRef.current >= 30 * 60 * 1000) {
+        pauseRecording();
+        setGpsError(
+          'Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 minutos). Grabación pausada preventivamente.'
+        );
+        highSpeedStartRef.current = null;
+        return;
+      }
+    } else if (speedKmH != null && speedKmH < 90) {
+      highSpeedStartRef.current = null;
+    }
+
+    // 3. Filtrar puntos con precisión muy mala (> umbral configurable)
     if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) {
       const updatedDiscarded: ActiveRecordingSession = {
         ...cur,
@@ -438,11 +539,28 @@ export const App: React.FC = () => {
       return;
     }
 
-    // Modo nativo en Android (Capacitor) con alta frecuencia para pantalla bloqueada
+    // Modo nativo en Android (Capacitor) con Foreground Service persistente para pantalla bloqueada
     if (Capacitor.isNativePlatform()) {
-      Geolocation.requestPermissions().then((perm) => {
+      Geolocation.requestPermissions().then(async (perm) => {
         if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
-          // 1. Watcher nativo continuo (pantalla encendida: 1 punto cada 1 a 2 seg)
+          // 1. Iniciar Servicio en Primer Plano nativo de Android (Foreground Service)
+          try {
+            await BackgroundGps.start();
+            nativeBgListenerRef.current = await BackgroundGps.addListener('onLocation', (loc) => {
+              handleIncomingPoint({
+                lat: loc.latitude,
+                lon: loc.longitude,
+                timestamp: loc.timestamp || Date.now(),
+                accuracy: loc.accuracy || 5,
+                altitude: loc.altitude ?? undefined,
+                speed: loc.speed ?? undefined,
+              });
+            });
+          } catch (err) {
+            console.warn('Servicio nativo BackgroundGps no disponible, usando fallback:', err);
+          }
+
+          // 2. Watcher nativo de respaldo
           Geolocation.watchPosition(
             {
               enableHighAccuracy: true,
@@ -450,10 +568,7 @@ export const App: React.FC = () => {
               maximumAge: 1000,
             },
             (pos, err) => {
-              if (err) {
-                setGpsError(`Error GPS nativo: ${err.message}`);
-                return;
-              }
+              if (err) return;
               if (pos) {
                 handleIncomingPoint({
                   lat: pos.coords.latitude,
@@ -468,31 +583,6 @@ export const App: React.FC = () => {
           ).then((id) => {
             nativeWatchIdRef.current = id;
           });
-
-          // 2. Frecuencia nativa garantizada para pantalla bloqueada (1 punto cada 2.5 seg)
-          nativeIntervalRef.current = window.setInterval(async () => {
-            const cur = sessionRef.current;
-            if (!cur || cur.status !== 'recording') return;
-            try {
-              const pos = await Geolocation.getCurrentPosition({
-                enableHighAccuracy: true,
-                timeout: 3000,
-                maximumAge: 1500,
-              });
-              if (pos) {
-                handleIncomingPoint({
-                  lat: pos.coords.latitude,
-                  lon: pos.coords.longitude,
-                  timestamp: pos.timestamp || Date.now(),
-                  accuracy: pos.coords.accuracy || 5,
-                  altitude: pos.coords.altitude ?? undefined,
-                  speed: pos.coords.speed ?? undefined,
-                });
-              }
-            } catch {
-              // Posición previa retenida
-            }
-          }, 2500);
         } else {
           setGpsError('Permisos de GPS denegados en el dispositivo.');
         }
@@ -546,6 +636,9 @@ export const App: React.FC = () => {
 
   const beginNewRecording = async () => {
     simStepRef.current = 0;
+    hourlyPromptDoneForHourRef.current = 0;
+    highSpeedStartRef.current = null;
+    setShowHourlyPrompt(false);
     const newSession: ActiveRecordingSession = {
       id: 'current',
       tripUuid: crypto.randomUUID(),
@@ -623,6 +716,9 @@ export const App: React.FC = () => {
     setRecordingSession(null);
     setRecoveredNotice(false);
     setGpsError(null);
+    setShowHourlyPrompt(false);
+    hourlyPromptDoneForHourRef.current = 0;
+    highSpeedStartRef.current = null;
   };
 
   const confirmAndSaveTrip = async (e: React.FormEvent) => {
@@ -1160,6 +1256,48 @@ export const App: React.FC = () => {
                 onClick={acceptPermissionExplanation}
               >
                 Entendido, activar GPS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmación tras 1 hora continua de grabación (Temporizador de seguridad) */}
+      {showHourlyPrompt && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-icon" style={{ background: '#fef3c7', color: '#d97706' }}>
+              <Clock size={28} />
+            </div>
+            <h2>¿Seguís en el camino?</h2>
+            <p>
+              Llevás <strong>1 hora continua</strong> grabando el recorrido. Pausamos el GPS de forma preventiva para cuidar la batería de tu teléfono.
+            </p>
+            <p style={{ marginTop: -6, fontSize: 13, color: '#64748b' }}>
+              ¿Querés continuar grabando o guardar lo recorrido hasta este punto?
+            </p>
+            <div className="modal-actions" style={{ flexDirection: 'column', gap: 10 }}>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() => {
+                  setShowHourlyPrompt(false);
+                  resumeRecording();
+                }}
+              >
+                <Play size={18} /> Sí, seguir grabando
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() => {
+                  setShowHourlyPrompt(false);
+                  finishToConfirmation();
+                }}
+              >
+                <Square size={18} /> No, guardar recorrido
               </button>
             </div>
           </div>
