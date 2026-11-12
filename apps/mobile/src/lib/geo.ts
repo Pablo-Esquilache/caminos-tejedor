@@ -40,6 +40,129 @@ export function formatDuration(seconds: number): string {
   return `${pad(mins)}:${pad(secs)}`;
 }
 
+/**
+ * Calcula el rumbo (bearing) en grados (0° a 360°) entre dos coordenadas geográficas.
+ */
+export function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const deltaLambda = toRad(lon2 - lon1);
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x =
+    Math.cos(phi1) * Math.sin(phi2) -
+    Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+  const theta = Math.atan2(y, x);
+  return (toDeg(theta) + 360) % 360;
+}
+
+/**
+ * Calcula la diferencia angular mínima en grados (0° a 180°) entre dos rumbos.
+ */
+export function angleDifferenceDegrees(b1: number, b2: number): number {
+  const diff = Math.abs(b1 - b2) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+/**
+ * Filtro Anti-Jitter y Anti-Retroceso:
+ * Detecta si un punto nuevo es un rebote / ruido de frenada o una inversión artificial de marcha
+ * en la misma cuadra producto de multipath GPS en esquinas.
+ */
+export function isGpsJitterOrReverse(
+  points: RawGpsPoint[],
+  newPt: RawGpsPoint,
+  deltaMeters: number
+): boolean {
+  if (points.length < 1) return false;
+
+  const speedKmH = newPt.speed != null ? newPt.speed * 3.6 : null;
+
+  // 1. Si el vehículo está detenido o casi quieto (< 3.6 km/h / ~1 m/s) y se movió menos de 4 metros: es ruido estático
+  if ((speedKmH != null && speedKmH < 3.6) && deltaMeters < 4) {
+    return true;
+  }
+
+  // 2. Micro-ruido menor a 2 metros en cualquier circunstancia
+  if (deltaMeters < 2 && points.length >= 2) {
+    return true;
+  }
+
+  // 3. Chequeo de anti-retroceso / rebote en esquinas:
+  // Si tenemos puntos previos, comparamos el rumbo del último tramo con el punto nuevo
+  const lastPt = points[points.length - 1];
+  let anchorPt: RawGpsPoint | null = null;
+  for (let i = points.length - 2; i >= 0; i--) {
+    const d = calculateDistanceMeters(points[i].lat, points[i].lon, lastPt.lat, lastPt.lon);
+    if (d >= 5) {
+      anchorPt = points[i];
+      break;
+    }
+  }
+
+  if (anchorPt) {
+    const prevBearing = calculateBearing(anchorPt.lat, anchorPt.lon, lastPt.lat, lastPt.lon);
+    const newBearing = calculateBearing(lastPt.lat, lastPt.lon, newPt.lat, newPt.lon);
+    const angleDiff = angleDifferenceDegrees(prevBearing, newBearing);
+
+    // Si el rumbo cambia bruscamente más de 135° (vuelve hacia atrás sobre la misma cuadra)
+    // y la distancia es corta (< 22 metros) con velocidad baja o moderada (< 25 km/h),
+    // es un rebote satelital por esquina o frenada
+    if (angleDiff > 135 && deltaMeters < 22 && (speedKmH == null || speedKmH < 25)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Limpieza geométrica al detener la grabación:
+ * Desanuda lazos / rulos espurios producidos en esquinas o paradas menores a 20 metros,
+ * dejando una traza continua, limpia y fiel sobre el camino.
+ */
+export function cleanTrackLoopsAndJitter(rawPoints: RawGpsPoint[]): RawGpsPoint[] {
+  if (rawPoints.length <= 3) return rawPoints;
+
+  const cleaned: RawGpsPoint[] = [];
+
+  for (let i = 0; i < rawPoints.length; i++) {
+    const pt = rawPoints[i];
+
+    if (cleaned.length === 0) {
+      cleaned.push(pt);
+      continue;
+    }
+
+    const prev = cleaned[cleaned.length - 1];
+    const distFromPrev = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
+
+    // Quitar micro-duplicados a menos de 2 metros
+    if (distFromPrev < 2) {
+      continue;
+    }
+
+    // Detección de bucle de rebote ("ida y vuelta en la misma cuadra"):
+    // Si este punto regresa muy cerca del punto ante-anterior (< 15m) mientras que el punto
+    // anterior se había desviado hacia adelante/costado formando un pico artificial de frenada
+    if (cleaned.length >= 2) {
+      const antePrev = cleaned[cleaned.length - 2];
+      const distAntePrev = calculateDistanceMeters(antePrev.lat, antePrev.lon, pt.lat, pt.lon);
+      const spikeDist = calculateDistanceMeters(antePrev.lat, antePrev.lon, prev.lat, prev.lon);
+
+      if (distAntePrev < spikeDist * 0.7 && spikeDist < 25) {
+        cleaned.pop(); // Eliminar el punto de pico espurio
+      }
+    }
+
+    cleaned.push(pt);
+  }
+
+  return cleaned.length >= 2 ? cleaned : rawPoints;
+}
+
 export const SAMPLE_TEJEDOR_ROUTES: Array<{
   name: string;
   description: string;

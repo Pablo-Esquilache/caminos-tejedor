@@ -17,6 +17,9 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class LocationService extends Service implements LocationListener {
 
@@ -26,6 +29,15 @@ public class LocationService extends Service implements LocationListener {
 
     private LocationManager locationManager;
     private PowerManager.WakeLock wakeLock;
+    private static final List<Location> locationBuffer = Collections.synchronizedList(new ArrayList<>());
+
+    public static List<Location> getAndClearBuffer() {
+        synchronized (locationBuffer) {
+            List<Location> copy = new ArrayList<>(locationBuffer);
+            locationBuffer.clear();
+            return copy;
+        }
+    }
 
     public interface LocationCallback {
         void onLocationReceived(Location location);
@@ -76,12 +88,12 @@ public class LocationService extends Service implements LocationListener {
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    2000L, // 2 segundos
+                    1500L, // 1.5 segundos para alta precisión y trazado fiel de curvas
                     0f,
                     this
                 );
-            }
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                // Fallback secundario únicamente si el GPS satelital está deshabilitado
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
                     2000L,
@@ -132,8 +144,18 @@ public class LocationService extends Service implements LocationListener {
 
     @Override
     public void onLocationChanged(Location location) {
-        if (location != null && locationCallback != null) {
-            locationCallback.onLocationReceived(location);
+        if (location != null) {
+            // Descartar lecturas con precisión pésima (> 35m) directamente a nivel de servicio Android
+            if (location.hasAccuracy() && location.getAccuracy() > 35f) {
+                return;
+            }
+
+            // Acumular en buffer nativo seguro contra apagado/bloqueo de pantalla
+            locationBuffer.add(location);
+
+            if (locationCallback != null) {
+                locationCallback.onLocationReceived(location);
+            }
         }
     }
 

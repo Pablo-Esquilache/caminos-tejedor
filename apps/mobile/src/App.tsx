@@ -37,6 +37,8 @@ import {
   formatDuration,
   SAMPLE_TEJEDOR_ROUTES,
   buildSimulatedPoint,
+  isGpsJitterOrReverse,
+  cleanTrackLoopsAndJitter,
 } from './lib/geo';
 import {
   clearActiveRecordingSession,
@@ -58,6 +60,16 @@ import { OperatorWorkspace } from './components/OperatorWorkspace';
 interface BackgroundGpsPlugin {
   start(): Promise<void>;
   stop(): Promise<void>;
+  getBufferedLocations?(): Promise<{
+    locations: Array<{
+      latitude: number;
+      longitude: number;
+      accuracy: number;
+      altitude?: number | null;
+      speed?: number | null;
+      timestamp: number;
+    }>;
+  }>;
   addListener(
     eventName: 'onLocation',
     listenerFunc: (loc: {
@@ -516,8 +528,8 @@ export const App: React.FC = () => {
 
     if (prevPoint) {
       deltaMeters = calculateDistanceMeters(prevPoint.lat, prevPoint.lon, pt.lat, pt.lon);
-      // Ignorar micro-ruido menor a 2 metros si el vehículo está detenido
-      if (deltaMeters < 2 && cur.points.length >= 2) {
+      // Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
+      if (isGpsJitterOrReverse(cur.points, pt, deltaMeters)) {
         return;
       }
     }
@@ -531,6 +543,59 @@ export const App: React.FC = () => {
     setRecordingSession(updated);
     await saveActiveRecordingSession(updated);
   };
+
+  // Drena los puntos acumulados por el Foreground Service nativo de Android mientras la pantalla estuvo bloqueada
+  const drainNativeLocationBuffer = async () => {
+    if (!Capacitor.isNativePlatform() || !BackgroundGps.getBufferedLocations) return;
+    try {
+      const res = await BackgroundGps.getBufferedLocations();
+      if (res && res.locations && res.locations.length > 0) {
+        for (const loc of res.locations) {
+          await handleIncomingPoint({
+            lat: loc.latitude,
+            lon: loc.longitude,
+            timestamp: loc.timestamp || Date.now(),
+            accuracy: loc.accuracy || 5,
+            altitude: loc.altitude ?? undefined,
+            speed: loc.speed ?? undefined,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Error drenando buffer nativo GPS:', err);
+    }
+  };
+
+  // Escuchar desbloqueo de pantalla y cambios de visibilidad para recuperar puntos acumulados
+  useEffect(() => {
+    const handleScreenWake = () => {
+      if (document.visibilityState === 'visible' && sessionRef.current?.status === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleScreenWake);
+    window.addEventListener('focus', handleScreenWake);
+
+    const appStateSub = CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+      if (state.isActive && sessionRef.current?.status === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    });
+
+    const drainTimer = window.setInterval(() => {
+      if (sessionRef.current?.status === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    }, 2500);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleScreenWake);
+      window.removeEventListener('focus', handleScreenWake);
+      appStateSub.then((s: any) => s?.remove?.()).catch(() => {});
+      window.clearInterval(drainTimer);
+    };
+  }, []);
 
   const startGpsCapture = (isSimulatorMode: boolean) => {
     stopGpsWatchers();
@@ -689,6 +754,7 @@ export const App: React.FC = () => {
 
   const pauseRecording = async () => {
     if (!recordingSession || recordingSession.status !== 'recording') return;
+    await drainNativeLocationBuffer();
     stopGpsWatchers();
     const additionalMs = recordingSession.lastResumedAt
       ? Date.now() - recordingSession.lastResumedAt
@@ -718,16 +784,32 @@ export const App: React.FC = () => {
 
   const finishToConfirmation = async () => {
     if (!recordingSession) return;
+    await drainNativeLocationBuffer();
     stopGpsWatchers();
     const additionalMs =
       recordingSession.status === 'recording' && recordingSession.lastResumedAt
         ? Date.now() - recordingSession.lastResumedAt
         : 0;
+
+    // Limpieza geométrica de lazos, rebotes y micro-ruido de esquinas antes de confirmar
+    const cleaned = cleanTrackLoopsAndJitter(recordingSession.points);
+    let cleanedDistance = 0;
+    for (let i = 1; i < cleaned.length; i++) {
+      cleanedDistance += calculateDistanceMeters(
+        cleaned[i - 1].lat,
+        cleaned[i - 1].lon,
+        cleaned[i].lat,
+        cleaned[i].lon
+      );
+    }
+
     const confirming: ActiveRecordingSession = {
       ...recordingSession,
       status: 'confirming',
       accumulatedDurationMs: recordingSession.accumulatedDurationMs + additionalMs,
       lastResumedAt: null,
+      points: cleaned,
+      distanceMeters: cleanedDistance > 0 ? cleanedDistance : recordingSession.distanceMeters,
     };
     setRecordingSession(confirming);
     await saveActiveRecordingSession(confirming);

@@ -31,6 +31,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import { Geolocation } from '@capacitor/geolocation';
 import { supabase } from '../lib/supabase';
 import {
@@ -40,6 +41,8 @@ import {
   formatDistance,
   formatDuration,
   SAMPLE_TEJEDOR_ROUTES,
+  isGpsJitterOrReverse,
+  cleanTrackLoopsAndJitter,
 } from '../lib/geo';
 import { getMapStyle } from '../lib/mapStyle';
 import { compressClaimPhoto } from '../lib/imageCompression';
@@ -57,6 +60,16 @@ import {
 interface BackgroundGpsPlugin {
   start(): Promise<void>;
   stop(): Promise<void>;
+  getBufferedLocations?(): Promise<{
+    locations: Array<{
+      latitude: number;
+      longitude: number;
+      accuracy: number;
+      altitude?: number | null;
+      speed?: number | null;
+      timestamp: number;
+    }>;
+  }>;
   addListener(
     eventName: 'onLocation',
     listenerFunc: (loc: {
@@ -482,7 +495,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     if (prevPts.length > 0) {
       const prev = prevPts[prevPts.length - 1];
       delta = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
-      if (delta < 2 && prevPts.length >= 2) return;
+      // Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
+      if (isGpsJitterOrReverse(prevPts, pt, delta)) return;
     }
 
     const nextPts = [...prevPts, pt];
@@ -491,6 +505,59 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     setPoints(nextPts);
     setDistanceM(distRef.current);
   };
+
+  // Drena los puntos acumulados por el Foreground Service nativo mientras la pantalla estuvo apagada
+  const drainNativeLocationBuffer = async () => {
+    if (!Capacitor.isNativePlatform() || !BackgroundGps.getBufferedLocations) return;
+    try {
+      const res = await BackgroundGps.getBufferedLocations();
+      if (res && res.locations && res.locations.length > 0) {
+        for (const loc of res.locations) {
+          pushIncomingPoint({
+            lat: loc.latitude,
+            lon: loc.longitude,
+            timestamp: loc.timestamp || Date.now(),
+            accuracy: loc.accuracy || 5,
+            altitude: loc.altitude ?? undefined,
+            speed: loc.speed ?? undefined,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Error drenando buffer nativo en Operario:', err);
+    }
+  };
+
+  // Escuchar desbloqueo de pantalla y cambios de foco para volcar el buffer nativo
+  useEffect(() => {
+    const handleWake = () => {
+      if (document.visibilityState === 'visible' && recStatus === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleWake);
+    window.addEventListener('focus', handleWake);
+
+    const appStateSub = CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+      if (state.isActive && recStatus === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    });
+
+    const drainTimer = window.setInterval(() => {
+      if (recStatus === 'recording') {
+        drainNativeLocationBuffer();
+      }
+    }, 2500);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleWake);
+      window.removeEventListener('focus', handleWake);
+      appStateSub.then((s: any) => s?.remove?.()).catch(() => {});
+      window.clearInterval(drainTimer);
+    };
+  }, [recStatus]);
 
   const attachLinearGps = async () => {
     stopAllGps();
@@ -686,8 +753,26 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     }
   };
 
-  const openLinearFinishSheet = (action: 'suspend' | 'submit') => {
+  const openLinearFinishSheet = async (action: 'suspend' | 'submit') => {
+    await drainNativeLocationBuffer();
     pauseLinearGps();
+
+    // Limpieza geométrica de lazos, retrocesos espurios y micro-ruido de esquinas
+    const cleaned = cleanTrackLoopsAndJitter(pointsRef.current);
+    let cleanedDist = 0;
+    for (let i = 1; i < cleaned.length; i++) {
+      cleanedDist += calculateDistanceMeters(
+        cleaned[i - 1].lat,
+        cleaned[i - 1].lon,
+        cleaned[i].lat,
+        cleaned[i].lon
+      );
+    }
+    pointsRef.current = cleaned;
+    distRef.current = cleanedDist > 0 ? cleanedDist : distRef.current;
+    setPoints(cleaned);
+    setDistanceM(distRef.current);
+
     setFinishAction(action);
     setRecStatus('finishing');
     if (action === 'submit' && pointsRef.current.length > 0) {

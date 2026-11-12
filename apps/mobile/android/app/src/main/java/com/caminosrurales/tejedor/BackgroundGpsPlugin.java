@@ -4,11 +4,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
 import androidx.core.content.ContextCompat;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.List;
 
 @CapacitorPlugin(name = "BackgroundGps")
 public class BackgroundGpsPlugin extends Plugin {
@@ -45,5 +47,24 @@ public class BackgroundGpsPlugin extends Plugin {
         Intent intent = new Intent(context, LocationService.class);
         context.stopService(intent);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void getBufferedLocations(PluginCall call) {
+        List<Location> buffer = LocationService.getAndClearBuffer();
+        JSArray array = new JSArray();
+        for (Location loc : buffer) {
+            JSObject obj = new JSObject();
+            obj.put("latitude", loc.getLatitude());
+            obj.put("longitude", loc.getLongitude());
+            obj.put("accuracy", loc.getAccuracy());
+            obj.put("altitude", loc.hasAltitude() ? loc.getAltitude() : null);
+            obj.put("speed", loc.hasSpeed() ? loc.getSpeed() : null);
+            obj.put("timestamp", loc.getTime() > 0 ? loc.getTime() : System.currentTimeMillis());
+            array.put(obj);
+        }
+        JSObject ret = new JSObject();
+        ret.put("locations", array);
+        call.resolve(ret);
     }
 }
