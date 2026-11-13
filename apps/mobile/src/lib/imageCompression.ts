@@ -7,43 +7,106 @@ export interface CompressedPhotoResult {
 }
 
 /**
+ * Lee las dimensiones de una imagen JPEG/PNG/WebP leyendo únicamente los primeros 128 KB
+ * del archivo, evitando decodificar fotos de 48-108 MP completas en memoria RAM.
+ */
+async function readImageDimensionsFromHeader(
+  file: File | Blob
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const slice = file.slice(0, 131072);
+    const buf = await slice.arrayBuffer();
+    const view = new DataView(buf);
+    const len = view.byteLength;
+
+    // PNG: 89 50 4E 47
+    if (len >= 24 && view.getUint32(0, false) === 0x89504e47) {
+      const width = view.getUint32(16, false);
+      const height = view.getUint32(20, false);
+      if (width > 0 && height > 0) return { width, height };
+    }
+
+    // JPEG: FF D8
+    if (len >= 4 && view.getUint16(0, false) === 0xffd8) {
+      let offset = 2;
+      while (offset + 4 < len) {
+        if (view.getUint8(offset) !== 0xff) break;
+        while (offset < len && view.getUint8(offset) === 0xff) offset++;
+        if (offset >= len) break;
+        const marker = view.getUint8(offset);
+        offset++;
+
+        if (marker === 0xd9 || marker === 0xda) break; // EOI o SOS
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+
+        if (offset + 2 > len) break;
+        const segLen = view.getUint16(offset, false);
+        if (segLen < 2 || offset + segLen > len) break;
+
+        // SOF0..SOF15 (excepto DHT=C4, JPG=C8, DAC=CC)
+        if (
+          marker >= 0xc0 &&
+          marker <= 0xcf &&
+          marker !== 0xc4 &&
+          marker !== 0xc8 &&
+          marker !== 0xcc
+        ) {
+          if (offset + 7 <= len) {
+            const height = view.getUint16(offset + 3, false);
+            const width = view.getUint16(offset + 5, false);
+            if (width > 0 && height > 0) return { width, height };
+          }
+          break;
+        }
+        offset += segLen;
+      }
+    }
+  } catch {
+    // Ignorar y usar fallback
+  }
+  return null;
+}
+
+/**
  * Decodifica y redimensiona de forma ultraliviana para móviles.
- * Utiliza createImageBitmap con redimensionado nativo por hardware cuando está disponible,
- * evitando que fotos pesadas de cámaras modernas (48 MP a 108 MP) desborden la memoria RAM del teléfono.
+ * Utiliza createImageBitmap con resizeWidth/resizeHeight sin decodificar primero
+ * la imagen completa en RAM, evitando errores de "memoria insuficiente" en PWA Android.
  */
 async function createResizedCanvas(
   file: File | Blob,
   maxDimension: number
 ): Promise<HTMLCanvasElement> {
-  // 1. Camino óptimo para navegadores modernos (reduce memoria antes de decodificar)
   if (typeof createImageBitmap === 'function') {
     try {
-      const probe = await createImageBitmap(file);
-      const origW = probe.width;
-      const origH = probe.height;
-      probe.close(); // Liberar memoria de inmediato
+      const dims = await readImageDimensionsFromHeader(file);
+      let resizeOpts: ImageBitmapOptions = {
+        resizeWidth: maxDimension,
+        resizeQuality: 'medium',
+      };
 
-      let targetW = origW;
-      let targetH = origH;
-      if (origW > maxDimension || origH > maxDimension) {
-        if (origW >= origH) {
-          targetW = maxDimension;
-          targetH = Math.max(1, Math.round((origH * maxDimension) / origW));
-        } else {
-          targetH = maxDimension;
-          targetW = Math.max(1, Math.round((origW * maxDimension) / origH));
+      if (dims) {
+        let targetW = dims.width;
+        let targetH = dims.height;
+        if (dims.width > maxDimension || dims.height > maxDimension) {
+          if (dims.width >= dims.height) {
+            targetW = maxDimension;
+            targetH = Math.max(1, Math.round((dims.height * maxDimension) / dims.width));
+          } else {
+            targetH = maxDimension;
+            targetW = Math.max(1, Math.round((dims.width * maxDimension) / dims.height));
+          }
         }
+        resizeOpts = {
+          resizeWidth: targetW,
+          resizeHeight: targetH,
+          resizeQuality: 'medium',
+        };
       }
 
-      const resizedBitmap = await createImageBitmap(file, {
-        resizeWidth: targetW,
-        resizeHeight: targetH,
-        resizeQuality: 'medium',
-      });
-
+      const resizedBitmap = await createImageBitmap(file, resizeOpts);
       const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
+      canvas.width = resizedBitmap.width;
+      canvas.height = resizedBitmap.height;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(resizedBitmap, 0, 0);
@@ -116,9 +179,9 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
  * - Procesa en serie para mantener el consumo de memoria por debajo de 30 MB en móviles.
  */
 export async function compressClaimPhoto(file: File | Blob): Promise<CompressedPhotoResult> {
-  // 1. Redimensionar foto principal (máx 1440px)
-  const mainCanvas = await createResizedCanvas(file, 1440);
-  const photoBlob = await canvasToJpegBlob(mainCanvas, 0.75);
+  // 1. Redimensionar foto principal (máx 1280px, JPEG 0.72 para bajo consumo de RAM en PWA)
+  const mainCanvas = await createResizedCanvas(file, 1280);
+  const photoBlob = await canvasToJpegBlob(mainCanvas, 0.72);
 
   // 2. Generar miniatura liviana a partir del lienzo ya reducido (ahorra 95% de CPU/RAM)
   const thumbCanvas = document.createElement('canvas');
@@ -140,7 +203,14 @@ export async function compressClaimPhoto(file: File | Blob): Promise<CompressedP
   if (tCtx) {
     tCtx.drawImage(mainCanvas, 0, 0, tW, tH);
   }
-  const thumbBlob = await canvasToJpegBlob(thumbCanvas, 0.68);
+  // Liberar memoria de mainCanvas de inmediato
+  mainCanvas.width = 0;
+  mainCanvas.height = 0;
+
+  const thumbBlob = await canvasToJpegBlob(thumbCanvas, 0.65);
+  thumbCanvas.width = 0;
+  thumbCanvas.height = 0;
+
   const thumbDataUrl = URL.createObjectURL(thumbBlob);
 
   return {

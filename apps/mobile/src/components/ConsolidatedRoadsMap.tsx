@@ -30,7 +30,7 @@ export const ConsolidatedRoadsMap: React.FC = () => {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
   const [segmentsCount, setSegmentsCount] = useState(0);
-  const [showInterventions, setShowInterventions] = useState(true);
+  const [showInterventions, setShowInterventions] = useState(false);
   const [interventionsCount, setInterventionsCount] = useState(0);
 
   const loadRoadsInViewport = async (map: maplibregl.Map) => {
