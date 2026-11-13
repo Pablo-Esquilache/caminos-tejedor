@@ -784,17 +784,26 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const added: Array<{ photoBlob: Blob; thumbBlob: Blob; previewUrl: string }> = [];
-    for (let i = 0; i < Math.min(files.length, 3 - photos.length); i++) {
-      const comp = await compressClaimPhoto(files[i]);
-      added.push({
-        photoBlob: comp.photoBlob,
-        thumbBlob: comp.thumbBlob,
-        previewUrl: comp.thumbDataUrl,
-      });
+    setGpsError(null);
+    try {
+      const added: Array<{ photoBlob: Blob; thumbBlob: Blob; previewUrl: string }> = [];
+      for (let i = 0; i < Math.min(files.length, 3 - photos.length); i++) {
+        const comp = await compressClaimPhoto(files[i]);
+        added.push({
+          photoBlob: comp.photoBlob,
+          thumbBlob: comp.thumbBlob,
+          previewUrl: comp.thumbDataUrl,
+        });
+      }
+      setPhotos((prev) => [...prev, ...added]);
+    } catch (err: any) {
+      console.error('Error procesando fotografía:', err);
+      setGpsError(
+        `No se pudo procesar la fotografía: ${err.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`
+      );
+    } finally {
+      e.target.value = '';
     }
-    setPhotos((prev) => [...prev, ...added]);
-    e.target.value = '';
   };
 
   const submitCurrentWork = async (e: React.FormEvent) => {

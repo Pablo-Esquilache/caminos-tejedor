@@ -142,6 +142,23 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
 
   useEffect(() => {
     loadCatalogs();
+
+    // Suscripción en tiempo real para reflejar inmediatamente tareas enviadas por los operarios
+    const channel = supabase
+      .channel('realtime_interventions_section')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'interventions' }, () => {
+        loadInterventions();
+      })
+      .subscribe();
+
+    const pollTimer = window.setInterval(() => {
+      loadInterventions();
+    }, 15000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      window.clearInterval(pollTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -502,12 +519,6 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
             <Settings size={16} /> Catálogos (Operarios, Máquinas y Obras)
           </button>
         </div>
-
-        {subTab === 'list' && !detailId && (
-          <button type="button" className="btn-approve" onClick={() => setShowPlanner(true)}>
-            <Plus size={16} /> Programar Nueva Intervención
-          </button>
-        )}
       </div>
 
       {/* =================================================================== */}
@@ -711,8 +722,8 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
       {/* =================================================================== */}
       {subTab === 'list' && !detailId && (
         <div className="panel-card">
-          <div className="filters-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <div className="filters-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 14 }}>
+            <select className="filter-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
               <option value="all">Todos los estados</option>
               <option value="pending_approval">Pendientes de aprobación ({pendingCount})</option>
               <option value="planned">Programadas</option>
@@ -721,21 +732,21 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
               <option value="rejected">Rechazadas</option>
             </select>
 
-            <select value={filterWorkTypeId} onChange={(e) => setFilterWorkTypeId(e.target.value)}>
+            <select className="filter-select" value={filterWorkTypeId} onChange={(e) => setFilterWorkTypeId(e.target.value)}>
               <option value="">Todos los tipos de obra</option>
               {workTypes.map((wt) => (
                 <option key={wt.id} value={wt.id}>{wt.name}</option>
               ))}
             </select>
 
-            <select value={filterMachineId} onChange={(e) => setFilterMachineId(e.target.value)}>
+            <select className="filter-select" value={filterMachineId} onChange={(e) => setFilterMachineId(e.target.value)}>
               <option value="">Todas las maquinarias</option>
               {machines.map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
 
-            <select value={filterOperatorId} onChange={(e) => setFilterOperatorId(e.target.value)}>
+            <select className="filter-select" value={filterOperatorId} onChange={(e) => setFilterOperatorId(e.target.value)}>
               <option value="">Todos los operarios</option>
               {operators.map((o) => (
                 <option key={o.id} value={o.id}>{o.full_name}</option>
@@ -744,6 +755,15 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
 
             <button type="button" className="btn-outline" onClick={() => loadInterventions(page)}>
               <RefreshCw size={15} /> Actualizar
+            </button>
+
+            <button
+              type="button"
+              className="btn-approve"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 }}
+              onClick={() => setShowPlanner(true)}
+            >
+              <Plus size={16} /> Programar Nueva Intervención
             </button>
 
             {selectedIds.length > 0 && (
@@ -792,7 +812,10 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
                   </tr>
                 ) : (
                   items.map((row) => (
-                    <tr key={row.id}>
+                    <tr
+                      key={row.id}
+                      className={row.status === 'pending_approval' ? 'row-awaiting-validation' : ''}
+                    >
                       <td>
                         <input
                           type="checkbox"
@@ -820,10 +843,12 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
                               ? 'approved'
                               : row.status === 'rejected'
                                 ? 'rejected'
-                                : 'pending'
+                                : row.status === 'pending_approval'
+                                  ? 'awaiting-validation'
+                                  : 'pending'
                           }`}
                         >
-                          {INTERVENTION_STATUS_LABELS[row.status]}
+                          {row.status === 'pending_approval' ? '🔔 Pendiente de Validación' : INTERVENTION_STATUS_LABELS[row.status]}
                         </span>
                       </td>
                       <td>

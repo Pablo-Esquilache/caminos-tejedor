@@ -9,7 +9,8 @@ import {
   type WorkTypeItem,
 } from '@shared';
 import { X, MapPin, Route as RouteIcon, Edit3, CheckCircle2 } from 'lucide-react';
-import { getBaseMapStyle, supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
 
 interface RoadOption {
@@ -52,6 +53,7 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
   const [definitionMode, setDefinitionMode] = useState<
     'consolidated_road' | 'points_along_road' | 'freehand_draw' | 'punctual_point'
   >('points_along_road');
+  const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
 
   const [selectedWorkTypeIds, setSelectedWorkTypeIds] = useState<string[]>([]);
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
@@ -104,10 +106,10 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
   }, [executionMode]);
 
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    if (!mapContainerRef.current) return;
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: getBaseMapStyle() as any,
+      style: getMapStyle(mapStyle) as any,
       center: [CARLOS_TEJEDOR_CENTER.longitude, CARLOS_TEJEDOR_CENTER.latitude],
       zoom: 11.5,
       attributionControl: false,
@@ -141,12 +143,14 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
         id: 'ref-roads-line',
         type: 'line',
         source: 'ref-roads',
-        paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-opacity': 0.55 },
+        paint: { 'line-color': '#38bdf8', 'line-width': 3.5, 'line-opacity': 0.85 },
       });
 
       map.addSource('planned-geom', {
         type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
+        data: plannedGeojson
+          ? ({ type: 'Feature', properties: {}, geometry: plannedGeojson } as any)
+          : ({ type: 'FeatureCollection', features: [] } as any),
       });
       map.addLayer({
         id: 'planned-line',
@@ -169,7 +173,14 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
 
       map.addSource('click-pts', {
         type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
+        data: {
+          type: 'FeatureCollection',
+          features: clickedPoints.map((c) => ({
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'Point', coordinates: c },
+          })),
+        } as any,
       });
       map.addLayer({
         id: 'click-pts-circle',
@@ -230,7 +241,7 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [mapStyle]);
 
   // Sincronizar capas visuales en MapLibre cuando cambia geometría o puntos marcados
   useEffect(() => {
@@ -565,7 +576,7 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
               <strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
                 Tipos de Trabajo ({executionMode === 'linear' ? 'Lineales' : 'Puntuales'}) *
               </strong>
-              <div style={{ maxHeight: 130, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ maxHeight: 155, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {activeWorkTypes.map((wt) => (
                   <label key={wt.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                     <input
@@ -594,7 +605,7 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
               <strong style={{ fontSize: 13, display: 'block', marginBottom: 6 }}>
                 Maquinaria Asignada
               </strong>
-              <div style={{ maxHeight: 130, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ maxHeight: 155, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {activeMachines.length === 0 ? (
                   <small style={{ color: '#64748b' }}>Cargá máquinas en la pestaña Catálogos.</small>
                 ) : (
@@ -734,10 +745,12 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
               style={{
                 fontSize: 12,
                 color: '#475569',
-                marginBottom: 6,
+                marginBottom: 8,
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 8,
               }}
             >
               <span>
@@ -749,20 +762,45 @@ export const AdminInterventionPlannerModal: React.FC<AdminInterventionPlannerMod
                       ? 'Hacé clics sucesivos sobre el mapa para dibujar la polilínea.'
                       : 'Se asigna el recorrido completo del camino consolidado seleccionado.'}
               </span>
-              <span style={{ fontWeight: 700, color: '#0f172a' }}>
-                {computingGeom
-                  ? 'Calculando traza en PostGIS...'
-                  : plannedLengthM > 0
-                    ? `Longitud estimada: ${formatDistance(plannedLengthM)}`
-                    : ''}
-              </span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {plannedLengthM > 0 && (
+                  <span style={{ fontWeight: 700, color: '#15803d', fontSize: 13 }}>
+                    Longitud estimada: {formatDistance(plannedLengthM)}
+                  </span>
+                )}
+                {computingGeom && (
+                  <span style={{ fontWeight: 600, color: '#f59e0b', fontSize: 12 }}>
+                    Calculando traza en PostGIS...
+                  </span>
+                )}
+                {/* Selector de capa Satélite HD / Vial */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    type="button"
+                    className={mapStyle === 'hybrid' ? 'btn-approve' : 'btn-outline'}
+                    style={{ fontSize: 11, padding: '3px 8px' }}
+                    onClick={() => setMapStyle('hybrid')}
+                  >
+                    Satélite + Caminos (HD)
+                  </button>
+                  <button
+                    type="button"
+                    className={mapStyle === 'streets' ? 'btn-approve' : 'btn-outline'}
+                    style={{ fontSize: 11, padding: '3px 8px' }}
+                    onClick={() => setMapStyle('streets')}
+                  >
+                    Mapa Vial
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div
               ref={mapContainerRef}
               style={{
                 width: '100%',
-                height: 290,
+                height: 360,
                 borderRadius: 10,
                 overflow: 'hidden',
                 border: '1px solid #cbd5e1',

@@ -267,6 +267,26 @@ export const App: React.FC = () => {
     loadTrips(0);
     loadRoads(0);
     loadUsers(0);
+
+    // Canal en tiempo real para reflejar nuevas intervenciones de operarios y reclamos vecinales
+    const shellChannel = supabase
+      .channel('realtime_admin_shell')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'interventions' }, () => {
+        loadDashboardSummary();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'claims' }, () => {
+        loadNewClaimsCount();
+      })
+      .subscribe();
+
+    const shellPoll = window.setInterval(() => {
+      loadDashboardSummary();
+    }, 20000);
+
+    return () => {
+      supabase.removeChannel(shellChannel);
+      window.clearInterval(shellPoll);
+    };
   }, [isAdminVerified]);
 
   useEffect(() => {
