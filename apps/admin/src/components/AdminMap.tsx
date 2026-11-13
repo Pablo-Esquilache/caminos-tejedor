@@ -87,94 +87,211 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [visibleClaimsCount, setVisibleClaimsCount] = useState(0);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
+  const layersStateRef = useRef({
+    showConsolidatedRoads,
+    showClaimsLayer,
+    showInterventionsLayer,
+    showApproved,
+    showPending,
+  });
+  layersStateRef.current = {
+    showConsolidatedRoads,
+    showClaimsLayer,
+    showInterventionsLayer,
+    showApproved,
+    showPending,
+  };
+
+  const viewportCacheRef = useRef<{
+    key: string;
+    roads: MapRoadSegmentFeature[] | null;
+    claims: MapClaimPointFeature[] | null;
+    interventions: MapInterventionFeature[] | null;
+    trips: MapTripFeature[] | null;
+  }>({
+    key: '',
+    roads: null,
+    claims: null,
+    interventions: null,
+    trips: null,
+  });
+
+  const setLayerGroupVisibility = (map: maplibregl.Map, layerIds: string[], visible: boolean) => {
+    const val = visible ? 'visible' : 'none';
+    for (const id of layerIds) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', val);
+      }
+    }
+  };
+
   const fetchViewportData = async (map: maplibregl.Map) => {
     if (mode !== 'general') return;
     const bounds = map.getBounds();
-    setLoadingBbox(true);
+    const zoom = map.getZoom();
+    const viewportKey = `${bounds.getWest().toFixed(5)},${bounds.getSouth().toFixed(5)},${bounds.getEast().toFixed(5)},${bounds.getNorth().toFixed(5)}@${zoom.toFixed(2)}`;
 
-    // 1. Cargar Red de Caminos Consolidados por Bounding Box y Zoom
-    if (showConsolidatedRoads) {
-      const { data: roadData } = await supabase.rpc('get_consolidated_roads_map', {
-        p_min_lon: bounds.getWest(),
-        p_min_lat: bounds.getSouth(),
-        p_max_lon: bounds.getEast(),
-        p_max_lat: bounds.getNorth(),
-        p_zoom: map.getZoom(),
-      });
-      if (Array.isArray(roadData)) {
-        const segs = roadData as MapRoadSegmentFeature[];
-        setVisibleRoadsCount(segs.length);
-        updateConsolidatedRoadsLayer(map, segs);
-      }
-    } else {
+    if (viewportCacheRef.current.key !== viewportKey) {
+      viewportCacheRef.current = {
+        key: viewportKey,
+        roads: null,
+        claims: null,
+        interventions: null,
+        trips: null,
+      };
+    }
+
+    const {
+      showConsolidatedRoads: wantRoads,
+      showClaimsLayer: wantClaims,
+      showInterventionsLayer: wantInterventions,
+      showApproved: wantApproved,
+      showPending: wantPending,
+    } = layersStateRef.current;
+
+    const cache = viewportCacheRef.current;
+    const pendingRequests: Promise<void>[] = [];
+
+    // 1. Red de Caminos Consolidados
+    const roadLayerIds = ['consolidated-roads-casing', 'consolidated-roads-line', 'consolidated-roads-label'];
+    if (!wantRoads) {
       setVisibleRoadsCount(0);
-      updateConsolidatedRoadsLayer(map, []);
+      setLayerGroupVisibility(map, roadLayerIds, false);
+    } else if (cache.roads !== null) {
+      setVisibleRoadsCount(cache.roads.length);
+      setLayerGroupVisibility(map, roadLayerIds, true);
+    } else {
+      pendingRequests.push(
+        (async () => {
+          const { data: roadData } = await supabase.rpc('get_consolidated_roads_map', {
+            p_min_lon: bounds.getWest(),
+            p_min_lat: bounds.getSouth(),
+            p_max_lon: bounds.getEast(),
+            p_max_lat: bounds.getNorth(),
+            p_zoom: zoom,
+          });
+          if (Array.isArray(roadData)) {
+            const segs = roadData as MapRoadSegmentFeature[];
+            cache.roads = segs;
+            if (layersStateRef.current.showConsolidatedRoads) {
+              setVisibleRoadsCount(segs.length);
+              updateConsolidatedRoadsLayer(map, segs);
+              setLayerGroupVisibility(map, roadLayerIds, true);
+            }
+          }
+        })()
+      );
     }
 
-    // 2. Cargar Reclamos Georreferenciados con Clustering por Bounding Box
-    if (showClaimsLayer) {
-      const { data: claimData } = await supabase.rpc('get_admin_map_claims', {
-        p_min_lon: bounds.getWest(),
-        p_min_lat: bounds.getSouth(),
-        p_max_lon: bounds.getEast(),
-        p_max_lat: bounds.getNorth(),
-        p_status: null,
-        p_category_id: null,
-      });
-      if (Array.isArray(claimData)) {
-        const claims = claimData as MapClaimPointFeature[];
-        setVisibleClaimsCount(claims.length);
-        updateClaimsClusterLayer(map, claims);
-      }
-    } else {
+    // 2. Reclamos Georreferenciados con Clustering
+    const claimLayerIds = ['admin-claims-clusters', 'admin-claims-cluster-count', 'admin-claims-unclustered', 'admin-claims-label'];
+    if (!wantClaims) {
       setVisibleClaimsCount(0);
-      updateClaimsClusterLayer(map, []);
+      setLayerGroupVisibility(map, claimLayerIds, false);
+    } else if (cache.claims !== null) {
+      setVisibleClaimsCount(cache.claims.length);
+      setLayerGroupVisibility(map, claimLayerIds, true);
+    } else {
+      pendingRequests.push(
+        (async () => {
+          const { data: claimData } = await supabase.rpc('get_admin_map_claims', {
+            p_min_lon: bounds.getWest(),
+            p_min_lat: bounds.getSouth(),
+            p_max_lon: bounds.getEast(),
+            p_max_lat: bounds.getNorth(),
+            p_status: null,
+            p_category_id: null,
+          });
+          if (Array.isArray(claimData)) {
+            const claims = claimData as MapClaimPointFeature[];
+            cache.claims = claims;
+            if (layersStateRef.current.showClaimsLayer) {
+              setVisibleClaimsCount(claims.length);
+              updateClaimsClusterLayer(map, claims);
+              setLayerGroupVisibility(map, claimLayerIds, true);
+            }
+          }
+        })()
+      );
     }
 
-    // 3. Cargar Capa Independiente de Intervenciones Viales (Obras municipales)
-    if (showInterventionsLayer) {
-      const { data: intData } = await supabase.rpc('get_map_interventions_geojson', {
-        p_min_lon: bounds.getWest(),
-        p_min_lat: bounds.getSouth(),
-        p_max_lon: bounds.getEast(),
-        p_max_lat: bounds.getNorth(),
-        p_include_planned: true,
-      });
-      if (Array.isArray(intData)) {
-        const list = intData as MapInterventionFeature[];
-        setVisibleInterventionsCount(list.length);
-        updateInterventionsLayer(map, list);
+    // 3. Intervenciones Viales
+    const intLayerIds = ['interventions-linear-approved', 'interventions-linear-active', 'interventions-punctual-pts'];
+    if (!wantInterventions) {
+      setVisibleInterventionsCount(0);
+      setLayerGroupVisibility(map, intLayerIds, false);
+    } else if (cache.interventions !== null) {
+      setVisibleInterventionsCount(cache.interventions.length);
+      setLayerGroupVisibility(map, intLayerIds, true);
+    } else {
+      pendingRequests.push(
+        (async () => {
+          const { data: intData } = await supabase.rpc('get_map_interventions_geojson', {
+            p_min_lon: bounds.getWest(),
+            p_min_lat: bounds.getSouth(),
+            p_max_lon: bounds.getEast(),
+            p_max_lat: bounds.getNorth(),
+            p_include_planned: true,
+          });
+          if (Array.isArray(intData)) {
+            const list = intData as MapInterventionFeature[];
+            cache.interventions = list;
+            if (layersStateRef.current.showInterventionsLayer) {
+              setVisibleInterventionsCount(list.length);
+              updateInterventionsLayer(map, list);
+              setLayerGroupVisibility(map, intLayerIds, true);
+            }
+          }
+        })()
+      );
+    }
+
+    // 4. Recorridos individuales (aprobados / pendientes)
+    const tripLayerIds = ['admin-trips-casing', 'admin-trips-line'];
+    if (!wantApproved && !wantPending) {
+      setVisibleCount(0);
+      setLayerGroupVisibility(map, tripLayerIds, false);
+    } else if (cache.trips !== null) {
+      const filtered = cache.trips.filter(
+        (it) => (wantApproved && it.status === 'approved') || (wantPending && it.status === 'pending')
+      );
+      setVisibleCount(filtered.length);
+      updateGeneralLayers(map, filtered);
+      setLayerGroupVisibility(map, tripLayerIds, filtered.length > 0);
+    } else {
+      pendingRequests.push(
+        (async () => {
+          const { data, error } = await supabase.rpc('get_admin_map_trips', {
+            p_min_lon: bounds.getWest(),
+            p_min_lat: bounds.getSouth(),
+            p_max_lon: bounds.getEast(),
+            p_max_lat: bounds.getNorth(),
+            p_statuses: ['approved', 'pending'],
+          });
+          if (!error && Array.isArray(data)) {
+            const items = data as MapTripFeature[];
+            cache.trips = items;
+            const cur = layersStateRef.current;
+            const filtered = items.filter(
+              (it) => (cur.showApproved && it.status === 'approved') || (cur.showPending && it.status === 'pending')
+            );
+            setVisibleCount(filtered.length);
+            updateGeneralLayers(map, filtered);
+            setLayerGroupVisibility(map, tripLayerIds, filtered.length > 0);
+          }
+        })()
+      );
+    }
+
+    if (pendingRequests.length > 0) {
+      setLoadingBbox(true);
+      try {
+        await Promise.all(pendingRequests);
+      } finally {
+        setLoadingBbox(false);
       }
     } else {
-      setVisibleInterventionsCount(0);
-      updateInterventionsLayer(map, []);
-    }
-
-    // 4. Cargar Recorridos individuales (aprobados / pendientes)
-    const statuses: string[] = [];
-    if (showApproved) statuses.push('approved');
-    if (showPending) statuses.push('pending');
-
-    if (statuses.length === 0) {
-      updateGeneralLayers(map, []);
-      setVisibleCount(0);
       setLoadingBbox(false);
-      return;
-    }
-
-    const { data, error } = await supabase.rpc('get_admin_map_trips', {
-      p_min_lon: bounds.getWest(),
-      p_min_lat: bounds.getSouth(),
-      p_max_lon: bounds.getEast(),
-      p_max_lat: bounds.getNorth(),
-      p_statuses: statuses,
-    });
-    setLoadingBbox(false);
-
-    if (!error && Array.isArray(data)) {
-      const items = data as MapTripFeature[];
-      setVisibleCount(items.length);
-      updateGeneralLayers(map, items);
     }
   };
 
@@ -822,6 +939,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     mapRef.current = map;
 
     return () => {
+      viewportCacheRef.current = { key: '', roads: null, claims: null, interventions: null, trips: null };
       map.remove();
       mapRef.current = null;
     };

@@ -1,39 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- Contenedor redondeado Verde Tejedor -->
-  <rect width="512" height="512" rx="108" fill="#245B45" />
-
-  <!-- Sello Circular Territorial -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
   <defs>
-    <clipPath id="territorial-circle">
-      <circle cx="256" cy="256" r="184" />
+    <clipPath id="territorial-clip">
+      <circle cx="64" cy="64" r="54" />
     </clipPath>
   </defs>
 
-  <!-- Fondo Blanco Cálido del círculo -->
-  <circle cx="256" cy="256" r="188" fill="#F5F4EF" />
+  <!-- Fondo blanco del círculo -->
+  <circle cx="64" cy="64" r="56" fill="#FFFFFF" />
 
-  <g clip-path="url(#territorial-circle)">
-    <!-- Llanura / campos pampeanos en la mitad inferior -->
-    <path d="M 56 264 Q 170 232 280 250 Q 380 266 456 242 L 456 460 L 56 460 Z" fill="#245B45" />
+  <g clip-path="url(#territorial-clip)">
+    <!-- Lomas verdes en el horizonte -->
+    <path d="M 6 77 Q 34 62 62 76 L 62 88 L 6 88 Z" fill="#39845C" />
+    <path d="M 66 76 Q 94 62 122 77 L 122 88 L 66 88 Z" fill="#39845C" />
 
-    <!-- Líneas de parcelas / franjas suaves -->
-    <path d="M 60 326 Q 160 294 235 314" fill="none" stroke="#F5F4EF" stroke-width="11" stroke-linecap="round" />
-    <path d="M 60 392 Q 140 366 205 384" fill="none" stroke="#F5F4EF" stroke-width="11" stroke-linecap="round" />
-    <path d="M 290 302 Q 375 288 452 322" fill="none" stroke="#F5F4EF" stroke-width="11" stroke-linecap="round" />
-    <path d="M 296 376 Q 380 368 452 408" fill="none" stroke="#F5F4EF" stroke-width="11" stroke-linecap="round" />
+    <!-- Campos rurales (Verde Tejedor) -->
+    <path d="M 6 81 Q 35 72 64 77 Q 93 72 122 81 L 122 124 L 6 124 Z" fill="#245B45" />
 
-    <!-- Borde Blanco Cálido del camino rural -->
-    <path d="M 142 465 C 175 386, 305 362, 286 292 C 276 258, 252 248, 256 236 C 244 248, 240 264, 242 294 C 248 356, 222 400, 238 465 Z" fill="#F5F4EF" stroke="#F5F4EF" stroke-width="16" stroke-linejoin="round" />
+    <!-- Líneas blancas divisorias de parcelas -->
+    <path d="M 8 81 Q 35 72 64 77 Q 93 72 120 81" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" />
+    <path d="M 8 92 Q 33 84 57 88" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" />
+    <path d="M 12 106 Q 31 99 48 102" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" />
+    <path d="M 71 88 Q 95 84 120 92" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" />
+    <path d="M 75 102 Q 97 99 116 106" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" />
 
-    <!-- Camino Rural Tierra / Tosca (#C58B45) -->
-    <path d="M 154 465 C 185 390, 298 364, 282 292 C 272 258, 254 248, 256 236 C 246 248, 244 264, 246 294 C 252 356, 220 400, 230 465 Z" fill="#C58B45" />
+    <!-- Camino rural sinuoso (Tierra / Tosca) con borde blanco -->
+    <path
+      d="M 64 76 C 69 82, 57 93, 35 122 L 73 122 C 74 96, 77 83, 64 76 Z"
+      fill="#C58B45"
+      stroke="#FFFFFF"
+      stroke-width="3.2"
+      stroke-linejoin="round"
+    />
+
+    <!-- Pin GPS -->
+    <path
+      d="M 64 22 C 53 22 45 30.5 45 41.5 C 45 54.5 64 72.5 64 72.5 C 64 72.5 83 54.5 83 41.5 C 83 30.5 75 22 64 22 Z"
+      fill="#245B45"
+    />
+    <circle cx="64" cy="41.5" r="7.5" fill="#FFFFFF" />
   </g>
 
-  <!-- Aro exterior del Círculo Territorial -->
-  <circle cx="256" cy="256" r="184" fill="none" stroke="#F5F4EF" stroke-width="14" />
-  <circle cx="256" cy="256" r="176" fill="none" stroke="#245B45" stroke-width="12" />
-
-  <!-- Marcador de ubicación GPS (#245B45 sobre cielo claro) -->
-  <path d="M 256 98 C 216 98, 184 130, 184 170 C 184 214, 238 258, 251 269 C 254 271.5, 258 271.5, 261 269 C 274 258, 328 214, 328 170 C 328 130, 296 98, 256 98 Z" fill="#245B45" stroke="#F5F4EF" stroke-width="8" />
-  <circle cx="256" cy="168" r="24" fill="#F5F4EF" />
+  <!-- Aro exterior Verde Tejedor -->
+  <circle cx="64" cy="64" r="56" stroke="#245B45" stroke-width="7" />
 </svg>
