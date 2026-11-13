@@ -1,13 +1,17 @@
 :root {
-  --bg: #f1f5f9;
+  --bg: #F5F4EF;
   --surface: #ffffff;
-  --sidebar: #143326;
-  --sidebar-hover: #1d4735;
-  --primary: #1e4d38;
-  --accent: #d97706;
-  --text: #0f172a;
-  --muted: #64748b;
-  --border: #e2e8f0;
+  --surface-soft: #D8E2D7;
+  --sidebar: #26352F;
+  --sidebar-hover: #245B45;
+  --primary: #245B45;
+  --accent: #C58B45;
+  --success: #39845C;
+  --warning: #D69A32;
+  --danger: #C64D43;
+  --text: #303A36;
+  --muted: #5C6863;
+  --border: #D8E2D7;
 }
 
 * {
@@ -17,7 +21,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
@@ -28,7 +32,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(150deg, #102a1f 0%, #1e4d38 100%);
+  background: linear-gradient(150deg, #26352F 0%, #245B45 100%);
   padding: 20px;
 }
 
@@ -41,15 +45,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 15px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 18px 40px rgba(38, 53, 47, 0.3);
 }
 
 .admin-login-badge {
-  width: 58px;
-  height: 58px;
-  border-radius: 14px;
-  background: #e6f2ec;
-  color: var(--primary);
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;

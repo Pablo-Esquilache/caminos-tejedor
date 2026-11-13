@@ -1053,8 +1053,8 @@ export const App: React.FC = () => {
     return (
       <div className="app-shell login-screen">
         <div className="login-card">
-          <div className="brand-badge">
-            <Compass size={34} />
+          <div className="brand-badge" style={{ background: 'transparent', padding: 0 }}>
+            <img src="/favicon.svg" alt="Caminos Rurales Carlos Tejedor" style={{ width: 68, height: 68, borderRadius: 15 }} />
           </div>
           <h1>Caminos Rurales</h1>
           <p className="subtitle">Partido de Carlos Tejedor</p>
@@ -1192,7 +1192,7 @@ export const App: React.FC = () => {
       <header className="top-bar">
         <div>
           <div className="top-bar-title">
-            <Navigation size={18} />
+            <img src="/favicon.svg" alt="" style={{ width: 24, height: 24, borderRadius: 6 }} />
             <span>Caminos Tejedor</span>
           </div>
           <span className="user-email-sub">{session.user.email}</span>

@@ -639,7 +639,11 @@ export const App: React.FC = () => {
       <div className="admin-login-page">
         <form className="admin-login-box" onSubmit={handleLogin}>
           <div className="admin-login-badge">
-            <ShieldCheck size={32} />
+            <img
+              src={`${import.meta.env.BASE_URL}favicon.svg`}
+              alt="Caminos Rurales Carlos Tejedor"
+              style={{ width: 64, height: 64, borderRadius: 14 }}
+            />
           </div>
           <h1>Panel Municipal</h1>
           <p className="admin-login-sub">Caminos Rurales — Partido de Carlos Tejedor</p>
@@ -696,7 +700,11 @@ export const App: React.FC = () => {
       {/* Menú Lateral */}
       <aside className="admin-sidebar">
         <div className="sidebar-brand">
-          <Navigation size={22} />
+          <img
+            src={`${import.meta.env.BASE_URL}favicon.svg`}
+            alt="Caminos Rurales Carlos Tejedor"
+            style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0 }}
+          />
           <div>
             <strong>Carlos Tejedor</strong>
             <span>Gestión Vial Rural</span>

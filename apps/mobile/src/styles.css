@@ -1,13 +1,16 @@
 :root {
-  --bg: #f3f6f3;
+  --bg: #F5F4EF;
   --surface: #ffffff;
-  --primary: #1e4d38;
-  --primary-hover: #163b2b;
-  --accent: #d97706;
-  --danger: #dc2626;
-  --text: #111827;
-  --muted: #4b5563;
-  --border: #d1d5db;
+  --surface-soft: #D8E2D7;
+  --primary: #245B45;
+  --primary-hover: #1B4635;
+  --accent: #C58B45;
+  --danger: #C64D43;
+  --success: #39845C;
+  --warning: #D69A32;
+  --text: #303A36;
+  --muted: #5C6863;
+  --border: #D8E2D7;
 }
 
 * {
@@ -17,8 +20,8 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  background-color: #e5ebe6;
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: #EAE8E0;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
@@ -30,7 +33,7 @@ body {
   background: var(--bg);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 0 28px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0 28px rgba(38, 53, 47, 0.1);
   position: relative;
 }
 
@@ -47,7 +50,7 @@ body {
   padding-bottom: max(24px, env(safe-area-inset-bottom, 24px));
   padding-left: max(20px, env(safe-area-inset-left, 20px));
   padding-right: max(20px, env(safe-area-inset-right, 20px));
-  background: linear-gradient(165deg, #163b2b 0%, #245740 100%);
+  background: linear-gradient(165deg, #26352F 0%, #245B45 100%);
 }
 
 .login-card {
