@@ -193,6 +193,8 @@ export const App: React.FC = () => {
   const [usersTotal, setUsersTotal] = useState(0);
   const [usersPage, setUsersPage] = useState(0);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [operatorUserIds, setOperatorUserIds] = useState<Set<string>>(new Set());
+  const [operatorEmails, setOperatorEmails] = useState<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -368,13 +370,25 @@ export const App: React.FC = () => {
 
   const loadUsers = async (pageIdx: number) => {
     setUsersLoading(true);
-    const { data, error } = await supabase.rpc('get_admin_users_list', {
-      p_limit: PAGE_SIZE,
-      p_offset: pageIdx * PAGE_SIZE,
-    });
-    if (!error && data) {
-      setUsersList((data.items || []) as AdminUserRow[]);
-      setUsersTotal(Number(data.total || 0));
+    const [usersRes, catalogsRes] = await Promise.all([
+      supabase.rpc('get_admin_users_list', {
+        p_limit: PAGE_SIZE,
+        p_offset: pageIdx * PAGE_SIZE,
+      }),
+      supabase.rpc('admin_list_catalogs'),
+    ]);
+    if (!catalogsRes.error && catalogsRes.data) {
+      const ops = (
+        (catalogsRes.data as { operators?: Array<{ user_id?: string | null; email?: string | null }> }).operators || []
+      );
+      setOperatorUserIds(new Set(ops.map((o) => o.user_id).filter((id): id is string => Boolean(id))));
+      setOperatorEmails(
+        new Set(ops.map((o) => o.email?.trim().toLowerCase()).filter((em): em is string => Boolean(em)))
+      );
+    }
+    if (!usersRes.error && usersRes.data) {
+      setUsersList((usersRes.data.items || []) as AdminUserRow[]);
+      setUsersTotal(Number(usersRes.data.total || 0));
       setUsersPage(pageIdx);
     }
     setUsersLoading(false);
@@ -1720,6 +1734,9 @@ export const App: React.FC = () => {
                           <td>
                             {u.is_admin ? (
                               <span className="badge-status status-approved">Administrador</span>
+                            ) : operatorUserIds.has(u.id) ||
+                              (u.email && operatorEmails.has(u.email.trim().toLowerCase())) ? (
+                              <span className="badge-status status-pending">Operario</span>
                             ) : (
                               <span className="badge-status status-rejected">Vecino</span>
                             )}
