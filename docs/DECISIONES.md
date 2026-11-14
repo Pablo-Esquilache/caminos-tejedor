@@ -104,3 +104,18 @@ En este documento se registran todas las decisiones de arquitectura, diseño y p
   * **Alta de operarios desde `/admin`:** La función SQL `admin_upsert_operator` permite al Administrador crear credenciales reales de ingreso (`email` + `password` en `auth.users` y `auth.identities`) directamente desde el Panel Web sin exponer la `SERVICE_ROLE_KEY` en el cliente, además de permitir operarios históricos sin cuenta y bloqueo inmediato al desactivar.
   * **Deduplicación GPS de maquinaria vial (`extract_worked_tramo_utm`):** Divide las trazas en pasadas continuas ante giros en U (> 125°) preservando esquinas de 90°, colapsa paradas largas (12 m) y recorta mediante `ST_Difference` con buffer lateral (24 m en `EPSG:32720`) cualquier pasada repetida de ida y vuelta o superpuesta entre jornadas múltiples (*"Terminar por hoy"*).
   * **Despliegue Web/PWA preservando APK:** El workflow `.github/workflows/build-apk.yml` pasó a ejecución manual (`workflow_dispatch`) mientras se valida el Módulo de Operario en Web/PWA, evitando pisar el release `v1.0.0-apk` existente.
+
+### 21. Buffer GPS Nativo, Filtro Anti-Jitter y Desanillado de Lazos
+* **Decisión:**
+  * `LocationService` (Android) acumula puntos en buffer en segundo plano y los entrega al reanudar la app (`getBufferedLocations`) para evitar pérdidas cuando el WebView queda suspendido.
+  * Filtro anti-jitter y desanillado de lazos para evitar saltos espurios en paradas o esquinas tanto en relevamientos como en el workspace del operario.
+
+### 22. Compresión de Fotos Segura en Memoria (PWA y Capacitor APK)
+* **Contexto:** Cámaras móviles modernas (48–108 MP) provocaban errores de *"memoria insuficiente"* en PWA al decodificar la imagen completa en RAM antes de redimensionarla.
+* **Decisión:** `readImageDimensionsFromHeader` en `apps/mobile/src/lib/imageCompression.ts` lee las dimensiones desde los primeros 128 KB del encabezado (JPEG/PNG) y llama a `createImageBitmap` directamente con `resizeWidth` y `resizeHeight` (máx. `1280px`, JPEG `0.72`), generando además miniatura (`280px`) y liberando ambos canvas inmediatamente.
+
+### 23. Identidad Visual "Círculo Territorial", Caché de Capas en Mapa Admin y Vistas por Rol
+* **Decisión:**
+  * **Identidad visual:** Adopción del logo vectorial *Círculo Territorial* (`favicon.svg`), paleta institucional (*Verde Tejedor* `#245B45`, *Tierra/Tosca* `#C58B45`, *Blanco cálido* `#F5F4EF`, *Verde oscuro* `#26352F`) y tipografía `Manrope` en `apps/mobile` y `apps/admin`.
+  * **Filtros instantáneos en `/admin` (`AdminMap.tsx`):** Caché por viewport (`bounds + zoom`), carga inicial paralela con `Promise.all` y toggle directo de visibilidad en MapLibre sin re-consultar RPCs al tildar/destildar capas.
+  * **Vistas diferenciadas:** En `/admin` se mantienen todas las capas activas por defecto y la tabla *Usuarios* distingue el rol **Operario** cruzando `admin_list_catalogs`. En `apps/mobile` (vecinos y operarios), la pestaña *Mapa* muestra exclusivamente la **Red Consolidada** (sin capa de obras) y la barra inferior del operario distribuye sus 3 accesos (*Mis Tareas*, *Mapa*, *Avisos*) de forma uniforme.

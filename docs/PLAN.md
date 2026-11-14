@@ -84,3 +84,9 @@ Una única aplicación instalable en teléfonos móviles que atiende a todos los
 * **Objetivo:** Sección de intervenciones en Estadísticas (km trabajados, maquinaria más utilizada, distribución por tipo de trabajo, reclamos resueltos).
 * **Privacidad gremial:** Cantidad de operarios participantes sin rankings nominales de personas.
 * **Avisos:** Se suman los trabajos pendientes al resumen semanal unificado por email (Brevo).
+
+### 🎨 Fase 15: Identidad Visual, Optimización Móvil/PWA y Rendimiento de Mapas (Completada)
+* **Identidad Visual:** Logo *Círculo Territorial* en `favicon.svg`, paleta *Verde Tejedor / Tierra-Tosca* y fuente `Manrope` aplicados en `apps/mobile` y `apps/admin`.
+* **Planificador y Realtime:** Satélite Mapbox en el planificador de intervenciones, botón de creación junto a actualizar y suscripción en tiempo real en la bandeja de intervenciones.
+* **Compresión de Fotos Anti-OOM:** Lectura de encabezado de 128 KB para redimensionado directo sin decodificar fotos de 48–108 MP en RAM (PWA y APK), tanto en *Reclamos* como en *Operarios*.
+* **Rendimiento y Vistas por Rol:** Caché por viewport y carga paralela en filtros de `AdminMap.tsx`; etiqueta de rol **Operario** en *Usuarios*; mapa móvil (vecinos y operarios) enfocado en la **Red Consolidada** y barra inferior del operario centrada en 3 columnas iguales.
