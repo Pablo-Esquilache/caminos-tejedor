@@ -15,6 +15,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
+import { syncPendingRoadElevations, type LowZoneMapItem } from '../lib/elevationDem';
 
 interface MapTripFeature {
   id: string;
@@ -85,6 +86,12 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [visibleCount, setVisibleCount] = useState(0);
   const [visibleRoadsCount, setVisibleRoadsCount] = useState(0);
   const [visibleClaimsCount, setVisibleClaimsCount] = useState(0);
+  const [showLowZonesLayer, setShowLowZonesLayer] = useState(false);
+  const [visibleLowZonesCount, setVisibleLowZonesCount] = useState(0);
+  const [pendingDemCount, setPendingDemCount] = useState(0);
+  const [syncingDem, setSyncingDem] = useState(false);
+  const [demError, setDemError] = useState<string | null>(null);
+  const [selectedLowZone, setSelectedLowZone] = useState<LowZoneMapItem | null>(null);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
   const layersStateRef = useRef({
@@ -93,6 +100,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     showInterventionsLayer,
     showApproved,
     showPending,
+    showLowZonesLayer,
   });
   layersStateRef.current = {
     showConsolidatedRoads,
@@ -100,6 +108,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     showInterventionsLayer,
     showApproved,
     showPending,
+    showLowZonesLayer,
   };
 
   const viewportCacheRef = useRef<{
@@ -108,12 +117,14 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     claims: MapClaimPointFeature[] | null;
     interventions: MapInterventionFeature[] | null;
     trips: MapTripFeature[] | null;
+    lowZones: LowZoneMapItem[] | null;
   }>({
     key: '',
     roads: null,
     claims: null,
     interventions: null,
     trips: null,
+    lowZones: null,
   });
 
   const setLayerGroupVisibility = (map: maplibregl.Map, layerIds: string[], visible: boolean) => {
@@ -138,6 +149,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         claims: null,
         interventions: null,
         trips: null,
+        lowZones: null,
       };
     }
 
@@ -147,6 +159,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       showInterventionsLayer: wantInterventions,
       showApproved: wantApproved,
       showPending: wantPending,
+      showLowZonesLayer: wantLowZones,
     } = layersStateRef.current;
 
     const cache = viewportCacheRef.current;
@@ -283,6 +296,38 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       );
     }
 
+    // 5. Zonas Bajas / Relieve (MDE 30m)
+    const lowZoneLayerIds = ['admin-low-zones-casing', 'admin-low-zones-line'];
+    if (!wantLowZones) {
+      setVisibleLowZonesCount(0);
+      setLayerGroupVisibility(map, lowZoneLayerIds, false);
+    } else if (cache.lowZones !== null) {
+      setVisibleLowZonesCount(cache.lowZones.length);
+      setLayerGroupVisibility(map, lowZoneLayerIds, true);
+    } else {
+      pendingRequests.push(
+        (async () => {
+          const { data: lzData, error: lzErr } = await supabase.rpc('get_admin_low_zones_map', {
+            p_min_lon: bounds.getWest(),
+            p_min_lat: bounds.getSouth(),
+            p_max_lon: bounds.getEast(),
+            p_max_lat: bounds.getNorth(),
+          });
+          if (!lzErr && lzData) {
+            const payload = lzData as { pending_count?: number; items?: LowZoneMapItem[] };
+            const list = Array.isArray(payload.items) ? payload.items : [];
+            setPendingDemCount(Number(payload.pending_count || 0));
+            cache.lowZones = list;
+            if (layersStateRef.current.showLowZonesLayer) {
+              setVisibleLowZonesCount(list.length);
+              updateLowZonesLayer(map, list);
+              setLayerGroupVisibility(map, lowZoneLayerIds, true);
+            }
+          }
+        })()
+      );
+    }
+
     if (pendingRequests.length > 0) {
       setLoadingBbox(true);
       try {
@@ -292,6 +337,90 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       }
     } else {
       setLoadingBbox(false);
+    }
+  };
+
+  const updateLowZonesLayer = (map: maplibregl.Map, items: LowZoneMapItem[]) => {
+    if (!map.isStyleLoaded()) return;
+
+    const fc: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: items
+        .filter((it) => it.low_zones_geojson)
+        .map((it) => ({
+          type: 'Feature',
+          properties: {
+            segment_id: it.segment_id,
+            road_name: it.road_name,
+            min_elevation_m: it.min_elevation_m,
+            max_elevation_m: it.max_elevation_m,
+            avg_elevation_m: it.avg_elevation_m,
+          },
+          geometry: it.low_zones_geojson,
+        })),
+    };
+
+    const existing = map.getSource('admin-low-zones') as maplibregl.GeoJSONSource | undefined;
+    if (existing) {
+      existing.setData(fc);
+    } else {
+      map.addSource('admin-low-zones', { type: 'geojson', data: fc });
+      map.addLayer({
+        id: 'admin-low-zones-casing',
+        type: 'line',
+        source: 'admin-low-zones',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 9,
+          'line-opacity': 0.85,
+        },
+      });
+      map.addLayer({
+        id: 'admin-low-zones-line',
+        type: 'line',
+        source: 'admin-low-zones',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#0284c7',
+          'line-width': 5.5,
+          'line-dasharray': [2, 1],
+        },
+      });
+
+      map.on('click', 'admin-low-zones-line', (e) => {
+        const feat = e.features?.[0];
+        const segId = feat?.properties?.segment_id as string | undefined;
+        if (!segId) return;
+        const found = viewportCacheRef.current.lowZones?.find((it) => it.segment_id === segId);
+        if (found) {
+          setSelectedLowZone(found);
+        }
+      });
+      map.on('mouseenter', 'admin-low-zones-line', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'admin-low-zones-line', () => {
+        map.getCanvas().style.cursor = '';
+      });
+    }
+  };
+
+  const handleSyncDem = async () => {
+    if (syncingDem) return;
+    setSyncingDem(true);
+    setDemError(null);
+    try {
+      await syncPendingRoadElevations(undefined, 12);
+      viewportCacheRef.current.lowZones = null;
+      const map = mapRef.current;
+      if (map && map.isStyleLoaded()) {
+        await fetchViewportData(map);
+      }
+    } catch (err) {
+      setDemError(err instanceof Error ? err.message : 'Error calculando relieve MDE.');
+    } finally {
+      setSyncingDem(false);
     }
   };
 
@@ -939,7 +1068,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     mapRef.current = map;
 
     return () => {
-      viewportCacheRef.current = { key: '', roads: null, claims: null, interventions: null, trips: null };
+      viewportCacheRef.current = { key: '', roads: null, claims: null, interventions: null, trips: null, lowZones: null };
       map.remove();
       mapRef.current = null;
     };
@@ -959,6 +1088,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     showInterventionsLayer,
     showApproved,
     showPending,
+    showLowZonesLayer,
     singleRouteCoords,
     singlePointCoords,
   ]);
@@ -1022,10 +1152,126 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             <span className="legend-dot approved" />
             <span>Trazas individuales aprobadas</span>
           </label>
+          <label className="layer-check">
+            <input
+              type="checkbox"
+              checked={showLowZonesLayer}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setShowLowZonesLayer(checked);
+                if (!checked) setSelectedLowZone(null);
+              }}
+            />
+            <span className="legend-dot" style={{ background: '#0284c7' }} />
+            <span>
+              <strong>Zonas Bajas / Relieve (MDE)</strong> ({visibleLowZonesCount} en vista)
+            </span>
+          </label>
+          {showLowZonesLayer && pendingDemCount > 0 && (
+            <div style={{ marginTop: 4, marginBottom: 4 }}>
+              <button
+                type="button"
+                onClick={handleSyncDem}
+                disabled={syncingDem}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  borderRadius: 8,
+                  border: '1px solid #0284c7',
+                  background: syncingDem ? '#e0f2fe' : '#0284c7',
+                  color: syncingDem ? '#0369a1' : '#ffffff',
+                  cursor: syncingDem ? 'wait' : 'pointer',
+                }}
+              >
+                {syncingDem
+                  ? 'Analizando relieve MDE...'
+                  : `Calcular Zonas Bajas (${pendingDemCount} tramo/s nuevos)`}
+              </button>
+            </div>
+          )}
+          {demError && (
+            <div style={{ fontSize: '0.75rem', color: '#C64D43', marginTop: 2 }}>{demError}</div>
+          )}
           <div className="layer-meta">
             {loadingBbox
               ? 'Consultando área visible...'
               : `${visibleRoadsCount} tramo(s) • ${visibleClaimsCount} reclamo(s) • ${visibleCount} recorrido(s)`}
+          </div>
+        </div>
+      )}
+
+      {/* Perfil Longitudinal de Elevación al hacer clic en una Zona Baja */}
+      {mode === 'general' && selectedLowZone && selectedLowZone.profile_points.length >= 2 && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 14,
+            bottom: 14,
+            zIndex: 25,
+            width: 'min(420px, calc(100% - 28px))',
+            background: 'rgba(255, 255, 255, 0.97)',
+            border: '1px solid #cbd5e1',
+            borderRadius: 12,
+            padding: '12px 14px',
+            boxShadow: '0 10px 25px rgba(15, 23, 42, 0.22)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div>
+              <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
+                {selectedLowZone.road_name}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+                Cota: {selectedLowZone.min_elevation_m} m – {selectedLowZone.max_elevation_m} m (desnivel{' '}
+                {(selectedLowZone.max_elevation_m - selectedLowZone.min_elevation_m).toFixed(1)} m) • MDE 30m
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedLowZone(null)}
+              style={{
+                border: 'none',
+                background: '#f1f5f9',
+                borderRadius: 6,
+                padding: '3px 8px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                color: '#334155',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          {(() => {
+            const pts = selectedLowZone.profile_points;
+            const w = 380;
+            const h = 95;
+            const padX = 8;
+            const padY = 10;
+            const maxDist = Math.max(1, pts[pts.length - 1].dist_m || 1);
+            const minE = selectedLowZone.min_elevation_m;
+            const maxE = selectedLowZone.max_elevation_m;
+            const spanE = Math.max(0.5, maxE - minE);
+            const toX = (d: number) => padX + (d / maxDist) * (w - padX * 2);
+            const toY = (e: number) => h - padY - ((e - minE) / spanE) * (h - padY * 2);
+            const linePath = pts
+              .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${toX(p.dist_m).toFixed(1)} ${toY(p.elev_m).toFixed(1)}`)
+              .join(' ');
+            return (
+              <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: 95, display: 'block', background: '#f8fafc', borderRadius: 8 }}>
+                <path d={linePath} fill="none" stroke="#245B45" strokeWidth="2" />
+                {pts.map((p, idx) =>
+                  p.is_low_zone ? (
+                    <circle key={idx} cx={toX(p.dist_m)} cy={toY(p.elev_m)} r="3" fill="#0284c7" />
+                  ) : null
+                )}
+              </svg>
+            );
+          })()}
+          <div style={{ fontSize: '0.72rem', color: '#0369a1', marginTop: 4 }}>
+            Los puntos azules indican los tramos de bajo relativo respecto a su entorno (~500 m).
           </div>
         </div>
       )}
