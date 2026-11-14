@@ -1,6 +1,9 @@
 name: Build Android APK (Capacitor)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -118,10 +121,11 @@ jobs:
             Descargá el archivo **`app-debug.apk`** adjunto en tu teléfono Android para probar la grabación de caminos con GPS en segundo plano y pantalla apagada.
             
             **Novedades en esta versión:**
-            * Login unificado: Botón Google para vecinos y acceso con usuario/clave para Administrador y Operarios.
-            * Detección de rol Administrador con auto-aprobación y consolidación de recorridos.
-            * Cartografía satelital Mapbox Satellite Streets HD a doble resolución retina (@2x).
-            * Soporte para pantalla bloqueada con Foreground Service y notificación persistente.
+            * Módulo completo de Operario (`Mis Tareas`, intervenciones programadas y espontáneas, fotos y GPS en segundo plano).
+            * Identidad visual "Círculo Territorial", paleta Verde Tejedor/Tosca y tipografía Manrope.
+            * Compresión de fotos optimizada en memoria (sin decodificar imágenes de 48-108 MP completas en RAM).
+            * Buffer GPS nativo en pantalla bloqueada con Foreground Service, filtro anti-jitter y desanillado de lazos.
+            * Mapa móvil enfocado en la Red Consolidada y barra inferior del operario centrada.
           files: dist-apk/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
