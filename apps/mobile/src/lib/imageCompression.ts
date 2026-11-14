@@ -14,13 +14,14 @@ interface HeaderDims {
 
 /**
  * Lee las dimensiones y orientación EXIF de una imagen JPEG/PNG/WebP leyendo únicamente
- * los primeros 128 KB del archivo, evitando decodificar fotos de 48-108 MP completas en RAM.
+ * los primeros 512 KB del archivo (cubre bloques APP1/ICC/XMP extensos de Samsung/Pixel),
+ * evitando decodificar fotos de 48-108 MP completas en RAM.
  */
 async function readImageDimensionsFromHeader(
   file: File | Blob
 ): Promise<HeaderDims | null> {
   try {
-    const slice = file.slice(0, 131072);
+    const slice = file.slice(0, 524288); // 512 KB
     const buf = await slice.arrayBuffer();
     const view = new DataView(buf);
     const len = view.byteLength;
@@ -40,18 +41,15 @@ async function readImageDimensionsFromHeader(
     ) {
       const chunk = view.getUint32(12, false);
       if (chunk === 0x56503820 && len >= 30) {
-        // VP8
         const w = view.getUint16(26, true) & 0x3fff;
         const h = view.getUint16(28, true) & 0x3fff;
         if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
       } else if (chunk === 0x5650384c && len >= 25) {
-        // VP8L
         const b = view.getUint32(21, true);
         const w = (b & 0x3fff) + 1;
         const h = ((b >> 14) & 0x3fff) + 1;
         if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
       } else if (chunk === 0x56503858 && len >= 30) {
-        // VP8X
         const w = 1 + (view.getUint8(24) | (view.getUint8(25) << 8) | (view.getUint8(26) << 16));
         const h = 1 + (view.getUint8(27) | (view.getUint8(28) << 8) | (view.getUint8(29) << 16));
         if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
@@ -139,8 +137,8 @@ function fitWithin(w: number, h: number, maxDim: number): { tw: number; th: numb
 
 /**
  * Decodifica y redimensiona de forma ultraliviana para móviles.
- * Utiliza createImageBitmap con resizeWidth/resizeHeight y siempre dibuja con
- * ctx.drawImage(bmp, 0, 0, tw, th) para evitar recortes si el navegador ignora resizeWidth.
+ * Utiliza createImageBitmap únicamente cuando conoce las dimensiones de destino (resizeWidth/resizeHeight)
+ * para no decodificar jamás un bitmap de 48-108 MP sin escalar en memoria RAM.
  */
 async function createResizedCanvas(
   file: File | Blob,
@@ -149,46 +147,38 @@ async function createResizedCanvas(
   if (typeof createImageBitmap === 'function') {
     try {
       const dims = await readImageDimensionsFromHeader(file);
-      let bmp: ImageBitmap;
-
       if (dims) {
         const swapped = dims.orientation >= 5 && dims.orientation <= 8;
         const dispW = swapped ? dims.height : dims.width;
         const dispH = swapped ? dims.width : dims.height;
         const { tw, th } = fitWithin(dispW, dispH, maxDimension);
-        bmp = await createImageBitmap(file, {
+        const bmp = await createImageBitmap(file, {
           resizeWidth: tw,
           resizeHeight: th,
           resizeQuality: 'medium',
           imageOrientation: 'from-image',
         } as ImageBitmapOptions);
-      } else {
-        bmp = await createImageBitmap(file, {
-          imageOrientation: 'from-image',
-        } as ImageBitmapOptions);
-      }
 
-      try {
-        // Calcular dimensiones finales a partir del bitmap real devuelto
-        const { tw, th } = fitWithin(bmp.width, bmp.height, maxDimension);
-        const canvas = document.createElement('canvas');
-        canvas.width = tw;
-        canvas.height = th;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          // Escalar explícitamente a (tw, th) por si el navegador ignoró resizeWidth/resizeHeight
-          ctx.drawImage(bmp, 0, 0, tw, th);
-          return canvas;
+        try {
+          const finalFit = fitWithin(bmp.width, bmp.height, maxDimension);
+          const canvas = document.createElement('canvas');
+          canvas.width = finalFit.tw;
+          canvas.height = finalFit.th;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(bmp, 0, 0, finalFit.tw, finalFit.th);
+            return canvas;
+          }
+        } finally {
+          bmp.close();
         }
-      } finally {
-        bmp.close();
       }
     } catch {
-      // Continuar con fallback estándar si createImageBitmap falla
+      // Continuar con fallback HTMLImageElement si createImageBitmap falla
     }
   }
 
-  // Fallback estándar con HTMLImageElement
+  // Fallback estándar con HTMLImageElement (orientación EXIF automática en navegadores modernos)
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -217,6 +207,18 @@ async function createResizedCanvas(
   });
 }
 
+function scaleCanvasDown(source: HTMLCanvasElement, maxDim: number): HTMLCanvasElement {
+  const { tw, th } = fitWithin(source.width, source.height, maxDim);
+  const c = document.createElement('canvas');
+  c.width = tw;
+  c.height = th;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    ctx.drawImage(source, 0, 0, tw, th);
+  }
+  return c;
+}
+
 function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -238,8 +240,8 @@ async function canvasToJpegUnder(
 ): Promise<Blob> {
   let q = startQuality;
   let blob = await canvasToJpegBlob(canvas, q);
-  while (blob.size > maxBytes && q - 0.1 >= minQuality) {
-    q = Math.round((q - 0.1) * 100) / 100;
+  while (blob.size > maxBytes && q - 0.08 >= minQuality) {
+    q = Math.round((q - 0.08) * 100) / 100;
     blob = await canvasToJpegBlob(canvas, q);
   }
   return blob;
@@ -259,29 +261,33 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 /**
  * Comprime la foto en el cliente antes de subirla o guardarla en la cola offline:
- * - Foto principal: máx 1280px (JPEG <= 150 KB con ajuste iterativo de calidad)
+ * - Foto principal: máx 1280px (con segundo paso automático a 960px / 720px si supera 150 KB, garantizando <= 150 KB)
  * - Miniatura (thumbnail): máx 280px (JPEG 0.65, ~8-12 KB)
- * - thumbDataUrl persistente (data:image/jpeg;base64 sobre la miniatura de 8 KB) que no caduca al reiniciar la app.
+ * - thumbDataUrl persistente (data:image/jpeg;base64) que no caduca al reiniciar la app.
  */
 export async function compressClaimPhoto(file: File | Blob): Promise<CompressedPhotoResult> {
-  // 1. Redimensionar foto principal (máx 1280px, objetivo <= 150 KB)
+  const MAX_BYTES = 150 * 1024;
   const mainCanvas = await createResizedCanvas(file, 1280);
   let photoBlob: Blob;
   let thumbCanvas: HTMLCanvasElement;
   try {
-    photoBlob = await canvasToJpegUnder(mainCanvas, 0.72, 0.42, 150 * 1024);
+    photoBlob = await canvasToJpegUnder(mainCanvas, 0.72, 0.42, MAX_BYTES);
 
-    // 2. Generar miniatura liviana a partir del lienzo ya reducido (ahorra 95% de CPU/RAM)
-    thumbCanvas = document.createElement('canvas');
-    const { tw, th } = fitWithin(mainCanvas.width, mainCanvas.height, 280);
-    thumbCanvas.width = tw;
-    thumbCanvas.height = th;
-    const tCtx = thumbCanvas.getContext('2d');
-    if (tCtx) {
-      tCtx.drawImage(mainCanvas, 0, 0, tw, th);
+    // Segundo paso garantizado: si por textura compleja (pasto/tosca) sigue > 150 KB, reducir lado a 960px / 720px
+    for (const fallbackDim of [960, 720]) {
+      if (photoBlob.size <= MAX_BYTES) break;
+      const smaller = scaleCanvasDown(mainCanvas, fallbackDim);
+      try {
+        photoBlob = await canvasToJpegUnder(smaller, 0.66, 0.38, MAX_BYTES);
+      } finally {
+        smaller.width = 0;
+        smaller.height = 0;
+      }
     }
+
+    // Generar miniatura liviana a partir del lienzo ya reducido
+    thumbCanvas = scaleCanvasDown(mainCanvas, 280);
   } finally {
-    // Liberar memoria de mainCanvas de inmediato
     mainCanvas.width = 0;
     mainCanvas.height = 0;
   }
@@ -294,7 +300,6 @@ export async function compressClaimPhoto(file: File | Blob): Promise<CompressedP
     thumbCanvas.height = 0;
   }
 
-  // Generar Data URL sobre la miniatura ya comprimida (~10 KB), segura para IndexedDB offline
   const thumbDataUrl = await blobToDataUrl(thumbBlob);
 
   return {
@@ -319,18 +324,15 @@ export async function generateSimulatedClaimPhoto(
   canvas.height = 800;
   const ctx = canvas.getContext('2d')!;
 
-  // Cielo rural
   const skyGrad = ctx.createLinearGradient(0, 0, 0, 380);
   skyGrad.addColorStop(0, '#38bdf8');
   skyGrad.addColorStop(1, '#bae6fd');
   ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, 1200, 380);
 
-  // Campo a los costados
   ctx.fillStyle = '#3f6212';
   ctx.fillRect(0, 380, 1200, 420);
 
-  // Camino de tierra en perspectiva
   ctx.fillStyle = '#92400e';
   ctx.beginPath();
   ctx.moveTo(490, 380);
@@ -340,7 +342,6 @@ export async function generateSimulatedClaimPhoto(
   ctx.closePath();
   ctx.fill();
 
-  // Huella de agua / bache simulado en el centro del camino
   ctx.fillStyle = '#451a03';
   ctx.beginPath();
   ctx.ellipse(600, 610, 180, 58, 0, 0, Math.PI * 2);
@@ -351,7 +352,6 @@ export async function generateSimulatedClaimPhoto(
   ctx.ellipse(600, 612, 150, 42, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Cartel inferior con metadatos de relevamiento
   ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
   ctx.fillRect(30, 645, 1140, 125);
 

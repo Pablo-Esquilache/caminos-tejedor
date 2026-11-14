@@ -574,28 +574,39 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     setDistanceM(distRef.current);
   };
 
-  // Drena los puntos del diario nativo GpsJournal desde nativeSeqRef.current
-  const drainNativeLocationBuffer = async () => {
-    const sid = opSessionIdRef.current;
-    if (!sid || !isNativeGps()) return;
-    try {
-      const { points: rawPts, lastSeq } = await drainNative(sid, nativeSeqRef.current);
-      for (const pt of rawPts) {
-        pushIncomingPoint(pt);
+  const opDrainingRef = useRef<Promise<void> | null>(null);
+
+  // Drena los puntos del diario nativo GpsJournal con cerrojo en curso (evita lecturas solapadas)
+  const drainNativeLocationBuffer = (): Promise<void> => {
+    if (opDrainingRef.current) return opDrainingRef.current;
+    const job = (async () => {
+      const sid = opSessionIdRef.current;
+      if (!sid || !isNativeGps()) return;
+      try {
+        const startSeq = nativeSeqRef.current;
+        const { points: rawPts, lastSeq } = await drainNative(sid, startSeq);
+        if (lastSeq > nativeSeqRef.current) {
+          nativeSeqRef.current = lastSeq;
+        }
+        for (const pt of rawPts) {
+          if (recStatusRef.current !== 'recording') break;
+          pushIncomingPoint(pt);
+        }
+      } catch (err) {
+        console.warn('Error drenando diario nativo en Operario:', err);
+      } finally {
+        opDrainingRef.current = null;
       }
-      if (lastSeq > nativeSeqRef.current) {
-        nativeSeqRef.current = lastSeq;
-      }
-    } catch (err) {
-      console.warn('Error drenando diario nativo en Operario:', err);
-    }
+    })();
+    opDrainingRef.current = job;
+    return job;
   };
 
   // Escuchar desbloqueo de pantalla y cambios de foco para volcar el diario nativo
   useEffect(() => {
     const handleWake = () => {
       if (document.visibilityState === 'visible' && recStatus === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     };
 
@@ -604,13 +615,13 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     const appStateSub = CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
       if (state.isActive && recStatus === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     });
 
     const drainTimer = window.setInterval(() => {
       if (recStatus === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     }, 2000);
 
@@ -646,37 +657,44 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     if (isNativeGps()) {
       const perm = await Geolocation.requestPermissions();
-      if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
-        const sid = opSessionIdRef.current || crypto.randomUUID();
-        opSessionIdRef.current = sid;
-        try {
-          await BackgroundGps.start({ sessionId: sid });
-          nativeBgListenerRef.current = await BackgroundGps.addListener('onLocation', (loc) => {
-            pushIncomingPoint(toRawPoint(loc), loc.seq);
-          });
-          return; // ÚNICA fuente GPS en Android nativo
-        } catch (err) {
-          console.warn('BackgroundGps falló en Operario, usando fallback:', err);
-        }
-
-        nativeWatchRef.current = await Geolocation.watchPosition(
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 },
-          (pos) => {
-            if (pos) {
-              pushIncomingPoint({
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                timestamp: pos.timestamp || Date.now(),
-                accuracy: pos.coords.accuracy || 5,
-                altitude: pos.coords.altitude ?? undefined,
-                speed: pos.coords.speed ?? undefined,
-              });
-            }
-          }
+      if (perm.location !== 'granted') {
+        await pauseLinearGps();
+        setGpsError(
+          perm.coarseLocation === 'granted'
+            ? 'Elegiste "Ubicación aproximada". Para registrar la jornada con pantalla bloqueada activá "Ubicación precisa" en los permisos de la app.'
+            : 'Permiso de ubicación GPS requerido para grabar el tramo.'
         );
-      } else {
-        setGpsError('Permiso de ubicación GPS requerido para grabar el tramo.');
+        return;
       }
+
+      const sid = opSessionIdRef.current || crypto.randomUUID();
+      opSessionIdRef.current = sid;
+      try {
+        await BackgroundGps.start({ sessionId: sid });
+        void drainNativeLocationBuffer();
+        return; // ÚNICA fuente GPS en Android nativo
+      } catch (err) {
+        console.warn('BackgroundGps falló en Operario, usando fallback:', err);
+        setGpsError(
+          'No se pudo iniciar el servicio GPS en segundo plano. Mantené la pantalla encendida durante la jornada.'
+        );
+      }
+
+      nativeWatchRef.current = await Geolocation.watchPosition(
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 },
+        (pos) => {
+          if (pos) {
+            pushIncomingPoint({
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude,
+              timestamp: pos.timestamp || Date.now(),
+              accuracy: pos.coords.accuracy || 5,
+              altitude: pos.coords.altitude ?? undefined,
+              speed: pos.coords.speed ?? undefined,
+            });
+          }
+        }
+      );
       return;
     }
 
@@ -705,7 +723,13 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
   const pauseLinearGps = async () => {
     await drainNativeLocationBuffer();
-    stopAllGps();
+    stopWebAndFallbackGps();
+    if (isNativeGps()) {
+      try {
+        await BackgroundGps.stop();
+      } catch {}
+      await drainNativeLocationBuffer();
+    }
     let nextAcc = accumulatedMs;
     if (lastResumedAt !== null) {
       nextAcc = accumulatedMs + (Date.now() - lastResumedAt);

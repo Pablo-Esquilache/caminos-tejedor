@@ -27,9 +27,36 @@ export interface LowZoneMapItem {
   dem_source: string;
 }
 
+async function fetchWithRetryAndTimeout(url: string, timeoutMs = 12000, maxAttempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        const waitMs = 800 * Math.pow(2, attempt - 1);
+        await new Promise((r) => setTimeout(r, waitMs));
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const waitMs = 700 * Math.pow(2, attempt - 1);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Timeout consultando servicio MDE');
+}
+
 /**
  * Consulta elevaciones en Copernicus DEM GLO-90 (90m) vía Open-Meteo Elevation API (gratuita, sin API key).
- * Agrupa de a 90 coordenadas por request para minimizar llamadas de red.
+ * Agrupa de a 90 coordenadas por request con timeout, reintentos ante HTTP 429/5xx y validación numérica.
  */
 export async function fetchDemElevationsBatch(
   points: Array<{ lat: number; lon: number }>
@@ -40,19 +67,23 @@ export async function fetchDemElevationsBatch(
 
   for (let i = 0; i < points.length; i += CHUNK_SIZE) {
     const chunk = points.slice(i, i + CHUNK_SIZE);
-    const lats = chunk.map((p) => p.lat.toFixed(6)).join(',');
-    const lons = chunk.map((p) => p.lon.toFixed(6)).join(',');
+    const lats = chunk.map((p) => Number(p.lat).toFixed(6)).join(',');
+    const lons = chunk.map((p) => Number(p.lon).toFixed(6)).join(',');
     const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
-    const res = await fetch(url);
+    const res = await fetchWithRetryAndTimeout(url, 12000, 3);
     if (!res.ok) {
       throw new Error(`Error consultando MDE (${res.status})`);
     }
-    const json = (await res.json()) as { elevation?: number[] };
+    const json = (await res.json()) as { elevation?: unknown[] };
     if (!Array.isArray(json.elevation) || json.elevation.length !== chunk.length) {
       throw new Error('Respuesta inesperada del servicio de elevación MDE');
     }
-    for (const val of json.elevation) {
-      results.push(Number(Number(val).toFixed(2)));
+    for (const rawVal of json.elevation) {
+      const num = Number(rawVal);
+      if (!Number.isFinite(num) || num < -50 || num > 500) {
+        throw new Error('Valor de elevación MDE inválido o fuera de rango');
+      }
+      results.push(Number(num.toFixed(2)));
     }
   }
 
@@ -60,8 +91,15 @@ export async function fetchDemElevationsBatch(
 }
 
 /**
- * Analiza un perfil longitudinal en llanura pampeana para detectar bajos locales / zonas anegables.
- * Compara cada punto contra su entorno local (~±270m) y el relieve general del tramo.
+ * Analiza un perfil longitudinal en llanura pampeana (MDE 90m) para detectar
+ * únicamente depresiones cóncavas bilaterales (cubetas / bajos cerrados donde el terreno
+ * baja respecto a ambos bordes izquierdo y derecho y vuelve a subir).
+ *
+ * - Las pendientes monótonas (sin importar el desnivel) dan siempre 0% porque el borde
+ *   aguas abajo es más bajo que el punto evaluado (el agua escurre y no se acumula).
+ * - Se aplica suavizado de 3 muestras (1-2-1) y se exigen al menos 2 muestras contiguas
+ *   (~180 m) con profundidad de cubeta >= 0,55 m (suavizada) y >= 0,65 m (cruda) respecto
+ *   a la cota de desborde bilateral min(maxIzq, maxDer), filtrando el ruido puntual del DEM.
  */
 export function analyzeSegmentElevation(
   samplePoints: ElevationSamplePoint[],
@@ -74,7 +112,8 @@ export function analyzeSegmentElevation(
   avgElev: number;
   hasLowZone: boolean;
 } {
-  if (samplePoints.length === 0 || samplePoints.length !== elevations.length) {
+  const n = samplePoints.length;
+  if (n === 0 || n !== elevations.length) {
     return {
       profilePoints: [],
       lowZonesGeojson: null,
@@ -89,39 +128,106 @@ export function analyzeSegmentElevation(
   let maxElev = -Infinity;
   let sum = 0;
   for (const e of elevations) {
+    if (!Number.isFinite(e)) {
+      return {
+        profilePoints: [],
+        lowZonesGeojson: null,
+        minElev: 0,
+        maxElev: 0,
+        avgElev: 0,
+        hasLowZone: false,
+      };
+    }
     if (e < minElev) minElev = e;
     if (e > maxElev) maxElev = e;
     sum += e;
   }
-  const avgElev = Number((sum / elevations.length).toFixed(2));
-  const totalRelief = maxElev - minElev;
+  const avgElev = Number((sum / n).toFixed(2));
 
-  const WINDOW_RADIUS = 3; // ±3 muestras cada 90m (~270 m a cada lado)
-  const profilePoints: ElevationProfilePoint[] = samplePoints.map((pt, idx) => {
-    const elev = elevations[idx];
-    const start = Math.max(0, idx - WINDOW_RADIUS);
-    const end = Math.min(elevations.length - 1, idx + WINDOW_RADIUS);
-    let localMax = -Infinity;
-    for (let j = start; j <= end; j++) {
-      if (elevations[j] > localMax) localMax = elevations[j];
+  // 1. Suavizado de media móvil ponderada 1-2-1 para suprimir ruido de muestra aislada del DEM
+  const smooth: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (i === 0 || i === n - 1) {
+      smooth[i] = elevations[i];
+    } else {
+      smooth[i] = 0.25 * elevations[i - 1] + 0.5 * elevations[i] + 0.25 * elevations[i + 1];
+    }
+  }
+
+  // 2. Evaluar prominencia cóncava bilateral contra ambos hombros (izquierdo y derecho)
+  const RIM_RADIUS = Math.min(10, Math.max(4, Math.floor(n / 3))); // ~360 m a 900 m a cada lado
+  const candidateLow: boolean[] = new Array(n).fill(false);
+  const rawDepths: number[] = new Array(n).fill(0);
+  const smoothDepths: number[] = new Array(n).fill(0);
+
+  for (let i = 1; i < n - 1; i++) {
+    const leftStart = Math.max(0, i - RIM_RADIUS);
+    const rightEnd = Math.min(n - 1, i + RIM_RADIUS);
+
+    let leftSmoothMax = -Infinity;
+    let leftRawMax = -Infinity;
+    for (let j = leftStart; j < i; j++) {
+      if (smooth[j] > leftSmoothMax) leftSmoothMax = smooth[j];
+      if (elevations[j] > leftRawMax) leftRawMax = elevations[j];
     }
 
-    const localDrop = localMax - elev;
-    const globalDrop = maxElev - elev;
-    const isLow =
-      localDrop >= 0.45 ||
-      (totalRelief >= 0.8 && globalDrop >= 0.6 && elev <= avgElev - 0.25);
+    let rightSmoothMax = -Infinity;
+    let rightRawMax = -Infinity;
+    for (let j = i + 1; j <= rightEnd; j++) {
+      if (smooth[j] > rightSmoothMax) rightSmoothMax = smooth[j];
+      if (elevations[j] > rightRawMax) rightRawMax = elevations[j];
+    }
 
-    return {
-      dist_m: pt.dist_m,
-      lat: pt.lat,
-      lon: pt.lon,
-      elev_m: elev,
-      is_low_zone: isLow,
-    };
-  });
+    // Cota de desborde de la cubeta: el menor de los dos bordes que la encierran
+    const spilloverSmooth = Math.min(leftSmoothMax, rightSmoothMax);
+    const spilloverRaw = Math.min(leftRawMax, rightRawMax);
 
-  // Extraer sub-tramos contiguos marcados como zona baja
+    const depthSmooth = spilloverSmooth - smooth[i];
+    const depthRaw = spilloverRaw - elevations[i];
+
+    smoothDepths[i] = depthSmooth;
+    rawDepths[i] = depthRaw;
+
+    if (depthSmooth >= 0.55 && depthRaw >= 0.65) {
+      candidateLow[i] = true;
+    }
+  }
+
+  // 3. Filtrar espigas aisladas: exigir corridas de al menos 2 muestras contiguas (~180 m)
+  //    donde la depresión alcance al menos 0,70 m de profundidad cruda (o >= 0,65 m suavizada)
+  const confirmedLow: boolean[] = new Array(n).fill(false);
+  let idx = 0;
+  while (idx < n) {
+    if (!candidateLow[idx]) {
+      idx++;
+      continue;
+    }
+    let endIdx = idx;
+    let peakRaw = rawDepths[idx];
+    let peakSmooth = smoothDepths[idx];
+    while (endIdx + 1 < n && candidateLow[endIdx + 1]) {
+      endIdx++;
+      if (rawDepths[endIdx] > peakRaw) peakRaw = rawDepths[endIdx];
+      if (smoothDepths[endIdx] > peakSmooth) peakSmooth = smoothDepths[endIdx];
+    }
+    const runLen = endIdx - idx + 1;
+    if (runLen >= 2 && (peakRaw >= 0.70 || peakSmooth >= 0.65)) {
+      for (let k = idx; k <= endIdx; k++) {
+        confirmedLow[k] = true;
+      }
+    }
+    idx = endIdx + 1;
+  }
+
+  const profilePoints: ElevationProfilePoint[] = samplePoints.map((pt, i) => ({
+    dist_m: pt.dist_m,
+    lat: pt.lat,
+    lon: pt.lon,
+    elev_m: elevations[i],
+    is_low_zone: confirmedLow[i],
+  }));
+
+  // 4. Extraer sub-tramos contiguos confirmados como cubeta / zona baja
   const lines: number[][][] = [];
   let i = 0;
   while (i < profilePoints.length) {
@@ -162,6 +268,7 @@ interface PendingSegmentRow {
   road_id: string;
   road_name: string;
   length_m: number;
+  geom_hash?: string;
   sample_points: ElevationSamplePoint[];
 }
 
@@ -216,6 +323,7 @@ export async function syncPendingRoadElevations(
         p_avg_elev: analyzed.avgElev,
         p_has_low_zone: analyzed.hasLowZone,
         p_dem_source: 'copernicus-dem-90m',
+        p_expected_geom_hash: s.row.geom_hash || null,
       });
       if (saveErr) {
         throw new Error(saveErr.message || 'Error guardando perfil altimétrico.');

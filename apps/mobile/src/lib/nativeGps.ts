@@ -26,10 +26,6 @@ export interface BackgroundGpsPlugin {
     lastFixAt: number | null;
   }>;
   clear(o: { sessionId: string }): Promise<void>;
-  addListener(
-    eventName: 'onLocation',
-    listenerFunc: (loc: NativeFix) => void
-  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 export const BackgroundGps = registerPlugin<BackgroundGpsPlugin>('BackgroundGps');

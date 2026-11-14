@@ -93,6 +93,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [showLowZonesLayer, setShowLowZonesLayer] = useState(false);
   const [visibleLowZonesCount, setVisibleLowZonesCount] = useState(0);
   const [pendingDemCount, setPendingDemCount] = useState(0);
+  const [lowZonesTruncated, setLowZonesTruncated] = useState(false);
   const [syncingDem, setSyncingDem] = useState(false);
   const [demError, setDemError] = useState<string | null>(null);
   const [selectedLowZone, setSelectedLowZone] = useState<LowZoneMapItem | null>(null);
@@ -318,9 +319,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             p_max_lat: bounds.getNorth(),
           });
           if (!lzErr && lzData) {
-            const payload = lzData as { pending_count?: number; items?: LowZoneMapItem[] };
+            const payload = lzData as { pending_count?: number; truncated?: boolean; items?: LowZoneMapItem[] };
             const list = Array.isArray(payload.items) ? payload.items : [];
             setPendingDemCount(Number(payload.pending_count || 0));
+            setLowZonesTruncated(Boolean(payload.truncated));
             cache.lowZones = list;
             if (layersStateRef.current.showLowZonesLayer) {
               setVisibleLowZonesCount(list.length);
@@ -1245,6 +1247,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
                   ? 'Analizando relieve MDE...'
                   : `Calcular Zonas Bajas (${pendingDemCount} tramo/s nuevos)`}
               </button>
+            </div>
+          )}
+          {showLowZonesLayer && lowZonesTruncated && (
+            <div style={{ fontSize: '0.73rem', color: '#b45309', marginTop: 2 }}>
+              Mostrando las primeras 300 zonas bajas del área visible. Acercá el mapa para ver el detalle completo.
             </div>
           )}
           {demError && (

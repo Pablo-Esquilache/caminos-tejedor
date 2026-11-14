@@ -460,11 +460,9 @@ export const App: React.FC = () => {
     }
   };
 
+  const drainingRef = useRef<Promise<void> | null>(null);
+
   const stopWebAndFallbackWatchers = () => {
-    if (nativeBgListenerRef.current?.remove) {
-      nativeBgListenerRef.current.remove();
-      nativeBgListenerRef.current = null;
-    }
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -484,51 +482,42 @@ export const App: React.FC = () => {
     releaseWakeLock();
   };
 
-  const stopNativeSafely = async () => {
-    stopWebAndFallbackWatchers();
-    if (isNativeGps()) {
-      try {
-        await BackgroundGps.stop();
-      } catch {}
-    }
-  };
-
-  const stopGpsWatchers = () => {
-    stopWebAndFallbackWatchers();
-    if (isNativeGps()) {
-      BackgroundGps.stop().catch(() => {});
-    }
-  };
-
-  // Función pura que aplica los filtros de geocerca, velocidad y cinemática sobre una sesión
+  // Función 100% pura que aplica los filtros de geocerca, velocidad y cinemática sobre una sesión
   const reduceIncomingPoint = (
     cur: ActiveRecordingSession,
-    pt: RawGpsPoint
-  ): { next: ActiveRecordingSession; pauseMsg?: string } => {
+    pt: RawGpsPoint,
+    highSpeedStartedAt: number | null
+  ): {
+    next: ActiveRecordingSession;
+    nextHighSpeedStartedAt: number | null;
+    pauseMsg?: string;
+  } => {
     // 1. Filtro geográfico oficial del Partido de Carlos Tejedor (con margen de 3 km)
     if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
       return {
         next: cur,
+        nextHighSpeedStartedAt: highSpeedStartedAt,
         pauseMsg:
           'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.',
       };
     }
 
     // 2. Filtro de velocidad sostenida en ruta (30 minutos continuos a > 100 km/h)
+    let nextHs = highSpeedStartedAt;
     const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
     if (speedKmH != null && speedKmH > 100) {
-      if (highSpeedStartRef.current === null) {
-        highSpeedStartRef.current = pt.timestamp || Date.now();
-      } else if ((pt.timestamp || Date.now()) - highSpeedStartRef.current >= 30 * 60 * 1000) {
-        highSpeedStartRef.current = null;
+      if (nextHs === null) {
+        nextHs = pt.timestamp || Date.now();
+      } else if ((pt.timestamp || Date.now()) - nextHs >= 30 * 60 * 1000) {
         return {
           next: cur,
+          nextHighSpeedStartedAt: null,
           pauseMsg:
             'Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 minutos). Grabación pausada preventivamente.',
         };
       }
     } else if (speedKmH != null && speedKmH < 90) {
-      highSpeedStartRef.current = null;
+      nextHs = null;
     }
 
     // 3. Filtrar puntos con precisión mala (> umbral configurable)
@@ -538,6 +527,7 @@ export const App: React.FC = () => {
           ...cur,
           discardedPointsCount: cur.discardedPointsCount + 1,
         },
+        nextHighSpeedStartedAt: nextHs,
       };
     }
 
@@ -554,11 +544,12 @@ export const App: React.FC = () => {
             ...cur,
             discardedPointsCount: cur.discardedPointsCount + 1,
           },
+          nextHighSpeedStartedAt: nextHs,
         };
       }
       // 5. Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
       if (isGpsJitterOrReverse(cur.points, pt, deltaMeters)) {
-        return { next: cur };
+        return { next: cur, nextHighSpeedStartedAt: nextHs };
       }
     }
 
@@ -568,6 +559,7 @@ export const App: React.FC = () => {
         distanceMeters: cur.distanceMeters + deltaMeters,
         points: [...cur.points, pt],
       },
+      nextHighSpeedStartedAt: nextHs,
     };
   };
 
@@ -576,16 +568,19 @@ export const App: React.FC = () => {
     let cur = sessionRef.current;
     if (!cur || cur.status !== 'recording') return;
 
+    let hs = highSpeedStartRef.current;
     let pauseMsg: string | undefined;
     for (const pt of pts) {
       setLastAccuracy(Math.round(pt.accuracy));
-      const res = reduceIncomingPoint(cur, pt);
+      const res = reduceIncomingPoint(cur, pt, hs);
       cur = res.next;
+      hs = res.nextHighSpeedStartedAt;
       if (res.pauseMsg) {
         pauseMsg = res.pauseMsg;
         break;
       }
     }
+    highSpeedStartRef.current = hs;
 
     if (newNativeSeq !== undefined && newNativeSeq > (cur.nativeSeq ?? 0)) {
       cur = { ...cur, nativeSeq: newNativeSeq };
@@ -605,13 +600,40 @@ export const App: React.FC = () => {
     await ingestPoints([pt], seq);
   };
 
-  // Drena los puntos del diario nativo GpsJournal desde el último cursor nativeSeq
-  const drainNativeLocationBuffer = async () => {
-    const cur = sessionRef.current;
-    if (!cur || !isNativeGps()) return;
-    const { points: rawPts, lastSeq } = await drainNative(cur.tripUuid, cur.nativeSeq ?? 0);
-    if (rawPts.length > 0 || lastSeq > (cur.nativeSeq ?? 0)) {
-      await ingestPoints(rawPts, lastSeq);
+  // Drena los puntos del diario nativo GpsJournal con cerrojo en curso (evita lecturas solapadas)
+  const drainNativeLocationBuffer = (): Promise<void> => {
+    if (drainingRef.current) return drainingRef.current;
+    const job = (async () => {
+      try {
+        const cur = sessionRef.current;
+        if (!cur || !isNativeGps()) return;
+        const { points: rawPts, lastSeq } = await drainNative(cur.tripUuid, cur.nativeSeq ?? 0);
+        if (rawPts.length > 0 || lastSeq > (cur.nativeSeq ?? 0)) {
+          await ingestPoints(rawPts, lastSeq);
+        }
+      } finally {
+        drainingRef.current = null;
+      }
+    })();
+    drainingRef.current = job;
+    return job;
+  };
+
+  const stopNativeSafely = async () => {
+    stopWebAndFallbackWatchers();
+    if (isNativeGps()) {
+      await drainNativeLocationBuffer();
+      try {
+        await BackgroundGps.stop();
+      } catch {}
+      await drainNativeLocationBuffer();
+    }
+  };
+
+  const stopGpsWatchers = () => {
+    stopWebAndFallbackWatchers();
+    if (isNativeGps()) {
+      BackgroundGps.stop().catch(() => {});
     }
   };
 
@@ -619,7 +641,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handleScreenWake = () => {
       if (document.visibilityState === 'visible' && sessionRef.current?.status === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     };
 
@@ -628,13 +650,13 @@ export const App: React.FC = () => {
 
     const appStateSub = CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
       if (state.isActive && sessionRef.current?.status === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     });
 
     const drainTimer = window.setInterval(() => {
       if (sessionRef.current?.status === 'recording') {
-        drainNativeLocationBuffer();
+        void drainNativeLocationBuffer();
       }
     }, 2000);
 
@@ -678,46 +700,51 @@ export const App: React.FC = () => {
       return;
     }
 
-    // Modo nativo en Android (Capacitor): ÚNICA fuente GPS en Foreground Service con diario en disco
+    // Modo nativo en Android (Capacitor): exigir permiso de UBICACIÓN PRECISA (location === 'granted')
     if (isNativeGps()) {
       Geolocation.requestPermissions().then(async (perm) => {
-        if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
-          try {
-            await BackgroundGps.start({ sessionId: activeSessionId });
-            nativeBgListenerRef.current = await BackgroundGps.addListener('onLocation', (loc) => {
-              const curSeq = sessionRef.current?.nativeSeq ?? 0;
-              if (typeof loc.seq === 'number' && loc.seq <= curSeq) return;
-              handleIncomingPoint(toRawPoint(loc), loc.seq);
-            });
-            return; // IMPORTANTE: no iniciar Geolocation.watchPosition en paralelo
-          } catch (err) {
-            console.warn('Servicio nativo BackgroundGps falló al iniciar, usando fallback:', err);
-          }
-
-          // Fallback exclusivo si el Foreground Service falló al arrancar
-          Geolocation.watchPosition(
-            {
-              enableHighAccuracy: true,
-              timeout: 10000,
-              maximumAge: 1000,
-            },
-            (pos, err) => {
-              if (err || !pos) return;
-              handleIncomingPoint({
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                timestamp: pos.timestamp || Date.now(),
-                accuracy: pos.coords.accuracy || 5,
-                altitude: pos.coords.altitude ?? undefined,
-                speed: pos.coords.speed ?? undefined,
-              });
-            }
-          ).then((id) => {
-            nativeWatchIdRef.current = id;
-          });
-        } else {
-          setGpsError('Permisos de GPS denegados en el dispositivo.');
+        if (perm.location !== 'granted') {
+          await pauseRecording();
+          setGpsError(
+            perm.coarseLocation === 'granted'
+              ? 'Elegiste "Ubicación aproximada". Para grabar caminos con pantalla bloqueada necesitás activar "Ubicación precisa" en los ajustes de permisos de la app.'
+              : 'Permiso de ubicación GPS denegado en el dispositivo.'
+          );
+          return;
         }
+
+        try {
+          await BackgroundGps.start({ sessionId: activeSessionId });
+          void drainNativeLocationBuffer();
+          return; // IMPORTANTE: el diario GpsJournal es la única fuente en Android nativo
+        } catch (err) {
+          console.warn('Servicio nativo BackgroundGps falló al iniciar, usando fallback:', err);
+          setGpsError(
+            'No se pudo iniciar el servicio GPS en segundo plano. Mantené la pantalla encendida durante el recorrido.'
+          );
+        }
+
+        // Fallback exclusivo si el Foreground Service falló al arrancar por restricción del fabricante
+        Geolocation.watchPosition(
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 1000,
+          },
+          (pos, err) => {
+            if (err || !pos) return;
+            handleIncomingPoint({
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude,
+              timestamp: pos.timestamp || Date.now(),
+              accuracy: pos.coords.accuracy || 5,
+              altitude: pos.coords.altitude ?? undefined,
+              speed: pos.coords.speed ?? undefined,
+            });
+          }
+        ).then((id) => {
+          nativeWatchIdRef.current = id;
+        });
       });
       return;
     }

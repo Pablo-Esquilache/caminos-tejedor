@@ -55,6 +55,7 @@ public class LocationService extends Service implements LocationListener {
     private long startedAtMs;
     private boolean signalLost = false;
     private Location lastAcceptedLocation = null;
+    private int consecutiveSpeedRejects = 0;
 
     @Override
     public void onCreate() {
@@ -99,6 +100,7 @@ public class LocationService extends Service implements LocationListener {
         lastFixAtMs = 0L;
         signalLost = false;
         lastAcceptedLocation = null;
+        consecutiveSpeedRejects = 0;
 
         renewWakeLock();
         requestLocationUpdates();
@@ -160,7 +162,14 @@ public class LocationService extends Service implements LocationListener {
                 float distM = l.distanceTo(lastAcceptedLocation);
                 double speedMps = distM / (dtMs / 1000.0);
                 if (speedMps > MAX_PLAUSIBLE_SPEED_MPS) {
-                    return; // Descarta salto fisico imposible / rebote de antena
+                    consecutiveSpeedRejects++;
+                    if (consecutiveSpeedRejects < 3) {
+                        return; // Descarta salto fisico imposible / rebote de antena
+                    }
+                    // Si 3 fixes seguidos dan salto contra el punto ancla anterior, el ancla inicial era espuria
+                    consecutiveSpeedRejects = 0;
+                } else {
+                    consecutiveSpeedRejects = 0;
                 }
             }
         }
