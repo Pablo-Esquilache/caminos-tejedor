@@ -21,6 +21,7 @@ export interface LowZoneMapItem {
   max_elevation_m: number;
   avg_elevation_m: number;
   has_low_zone: boolean;
+  low_zone_length_m?: number;
   low_zones_geojson: GeoJSON.MultiLineString | GeoJSON.LineString;
   profile_points: ElevationProfilePoint[];
   dem_source: string;

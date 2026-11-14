@@ -38,6 +38,10 @@ interface MapRoadSegmentFeature {
   road_class: RoadClass;
   total_length_m: number;
   approved_trips_count: number;
+  min_elevation_m?: number | null;
+  max_elevation_m?: number | null;
+  has_low_zone?: boolean;
+  low_zone_length_m?: number;
   geojson: {
     type: 'LineString';
     coordinates: Array<[number, number]>;
@@ -371,8 +375,9 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         source: 'admin-low-zones',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': '#ffffff',
-          'line-width': 9,
+          'line-color': '#0f172a',
+          'line-gap-width': 8,
+          'line-width': 5,
           'line-opacity': 0.85,
         },
       });
@@ -382,9 +387,9 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         source: 'admin-low-zones',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': '#0284c7',
-          'line-width': 5.5,
-          'line-dasharray': [2, 1],
+          'line-color': '#00e5ff',
+          'line-gap-width': 9,
+          'line-width': 3,
         },
       });
 
@@ -413,6 +418,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     try {
       await syncPendingRoadElevations(undefined, 12);
       viewportCacheRef.current.lowZones = null;
+      viewportCacheRef.current.roads = null;
       const map = mapRef.current;
       if (map && map.isStyleLoaded()) {
         await fetchViewportData(map);
@@ -556,6 +562,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             road_class: s.road_class,
             total_length_m: s.total_length_m,
             approved_trips_count: s.approved_trips_count,
+            min_elevation_m: s.min_elevation_m ?? null,
+            max_elevation_m: s.max_elevation_m ?? null,
+            has_low_zone: Boolean(s.has_low_zone),
+            low_zone_length_m: Number(s.low_zone_length_m || 0),
           },
           geometry: s.geojson,
         })),
@@ -645,10 +655,39 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       map.on('click', 'consolidated-roads-line', (e) => {
         const feat = e.features?.[0];
         if (!feat || !feat.properties) return;
-        const { normalized_name, road_class, total_length_m, approved_trips_count } =
-          feat.properties;
+        const {
+          segment_id,
+          normalized_name,
+          road_class,
+          total_length_m,
+          approved_trips_count,
+          min_elevation_m,
+          max_elevation_m,
+          has_low_zone,
+          low_zone_length_m,
+        } = feat.properties;
         const classLabel =
           ROAD_CLASS_LABELS[road_class as RoadClass] || String(road_class);
+
+        const hasElev =
+          min_elevation_m !== null &&
+          min_elevation_m !== undefined &&
+          min_elevation_m !== 'null' &&
+          max_elevation_m !== null &&
+          max_elevation_m !== undefined &&
+          max_elevation_m !== 'null';
+
+        const isLow = has_low_zone === true || has_low_zone === 'true';
+        const lowLen = Number(low_zone_length_m || 0);
+
+        const elevHtml = hasElev
+          ? `<div>Cota MDE: <b>${Number(min_elevation_m).toFixed(1)} m – ${Number(max_elevation_m).toFixed(1)} m s.n.m.</b></div>
+             <div>Zona baja / inundable: <b style="color:${isLow ? '#0284c7' : '#475569'}">${
+               isLow
+                 ? `Tramo bajo detectado (${formatDistance(lowLen)})`
+                 : 'Sin tramo bajo crítico (< 0,45 m)'
+             }</b></div>`
+          : `<div>Zona baja / inundable: <span style="color:#64748b">Sin analizar aún (activar filtro Zonas Bajas)</span></div>`;
 
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
@@ -657,7 +696,21 @@ export const AdminMap: React.FC<AdminMapProps> = ({
           <div>Jerarquía: <b>${classLabel}</b></div>
           <div>Longitud: ${formatDistance(Number(total_length_m))}</div>
           <div>Recorridos aprobados: <b>${approved_trips_count}</b></div>
+          ${elevHtml}
         `;
+
+        if (isLow && segment_id) {
+          const foundLz = viewportCacheRef.current.lowZones?.find(
+            (it) => it.segment_id === String(segment_id)
+          );
+          if (foundLz) {
+            const btn = document.createElement('button');
+            btn.className = 'popup-open-btn';
+            btn.textContent = 'Ver perfil de zona baja';
+            btn.onclick = () => setSelectedLowZone(foundLz);
+            popupNode.appendChild(btn);
+          }
+        }
 
         new maplibregl.Popup({ closeButton: true })
           .setLngLat(e.lngLat)
@@ -1162,7 +1215,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
                 if (!checked) setSelectedLowZone(null);
               }}
             />
-            <span className="legend-dot" style={{ background: '#0284c7' }} />
+            <span
+              className="legend-dot"
+              style={{ background: '#00e5ff', border: '1.5px solid #0891b2' }}
+            />
             <span>
               <strong>Zonas Bajas / Relieve (MDE)</strong> ({visibleLowZonesCount} en vista)
             </span>
