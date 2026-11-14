@@ -28,7 +28,7 @@ export interface LowZoneMapItem {
 }
 
 /**
- * Consulta elevaciones en Copernicus DEM 30m vía Open-Meteo Elevation API (gratuita, sin API key).
+ * Consulta elevaciones en Copernicus DEM GLO-90 (90m) vía Open-Meteo Elevation API (gratuita, sin API key).
  * Agrupa de a 90 coordenadas por request para minimizar llamadas de red.
  */
 export async function fetchDemElevationsBatch(
@@ -96,7 +96,7 @@ export function analyzeSegmentElevation(
   const avgElev = Number((sum / elevations.length).toFixed(2));
   const totalRelief = maxElev - minElev;
 
-  const WINDOW_RADIUS = 6; // ±6 muestras (~270 m a cada lado)
+  const WINDOW_RADIUS = 3; // ±3 muestras cada 90m (~270 m a cada lado)
   const profilePoints: ElevationProfilePoint[] = samplePoints.map((pt, idx) => {
     const elev = elevations[idx];
     const start = Math.max(0, idx - WINDOW_RADIUS);
@@ -215,7 +215,7 @@ export async function syncPendingRoadElevations(
         p_max_elev: analyzed.maxElev,
         p_avg_elev: analyzed.avgElev,
         p_has_low_zone: analyzed.hasLowZone,
-        p_dem_source: 'copernicus-dem-30m',
+        p_dem_source: 'copernicus-dem-90m',
       });
       if (saveErr) {
         throw new Error(saveErr.message || 'Error guardando perfil altimétrico.');

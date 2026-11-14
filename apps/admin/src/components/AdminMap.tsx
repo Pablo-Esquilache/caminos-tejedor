@@ -681,7 +681,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const lowLen = Number(low_zone_length_m || 0);
 
         const elevHtml = hasElev
-          ? `<div>Cota MDE: <b>${Number(min_elevation_m).toFixed(1)} m – ${Number(max_elevation_m).toFixed(1)} m s.n.m.</b></div>
+          ? `<div>Cota MDE 90m (indicio): <b>${Number(min_elevation_m).toFixed(1)} m – ${Number(max_elevation_m).toFixed(1)} m s.n.m.</b></div>
              <div>Zona baja / inundable: <b style="color:${isLow ? '#0284c7' : '#475569'}">${
                isLow
                  ? `Tramo bajo detectado (${formatDistance(lowLen)})`
@@ -1281,7 +1281,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
               </div>
               <div style={{ fontSize: '0.74rem', color: '#475569' }}>
                 Cota: {selectedLowZone.min_elevation_m} m – {selectedLowZone.max_elevation_m} m (desnivel{' '}
-                {(selectedLowZone.max_elevation_m - selectedLowZone.min_elevation_m).toFixed(1)} m) • MDE 30m
+                {(selectedLowZone.max_elevation_m - selectedLowZone.min_elevation_m).toFixed(1)} m) • MDE 90m (indicio macro)
               </div>
             </div>
             <button

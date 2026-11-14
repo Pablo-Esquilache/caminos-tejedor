@@ -21,6 +21,7 @@ export interface ActiveRecordingSession {
   distanceMeters: number;
   points: RawGpsPoint[];
   discardedPointsCount: number;
+  nativeSeq?: number; // último seq leído del diario nativo Android (GpsJournal)
 }
 
 export interface PendingTripOutboxItem {

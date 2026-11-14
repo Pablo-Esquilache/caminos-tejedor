@@ -30,7 +30,6 @@ import {
   WifiOff,
   Wrench,
 } from 'lucide-react';
-import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import { Geolocation } from '@capacitor/geolocation';
 import { supabase } from '../lib/supabase';
@@ -56,34 +55,9 @@ import {
   saveInterventionToOutbox,
   type PendingInterventionOutboxItem,
 } from '../lib/localDb';
+import { BackgroundGps, isNativeGps, toRawPoint, drainNative } from '../lib/nativeGps';
 
-interface BackgroundGpsPlugin {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  getBufferedLocations?(): Promise<{
-    locations: Array<{
-      latitude: number;
-      longitude: number;
-      accuracy: number;
-      altitude?: number | null;
-      speed?: number | null;
-      timestamp: number;
-    }>;
-  }>;
-  addListener(
-    eventName: 'onLocation',
-    listenerFunc: (loc: {
-      latitude: number;
-      longitude: number;
-      accuracy: number;
-      altitude?: number | null;
-      speed?: number | null;
-      timestamp: number;
-    }) => void
-  ): Promise<any>;
-}
-
-const BackgroundGps = registerPlugin<BackgroundGpsPlugin>('BackgroundGps');
+const OP_ACTIVE_WORK_KEY = 'operator_active_work_v1';
 
 function playWorkAlertTone() {
   try {
@@ -188,6 +162,33 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   distRef.current = distanceM;
   const highSpeedStartRef = useRef<number | null>(null);
   const hourlyPromptHourRef = useRef<number>(0);
+  const opSessionIdRef = useRef<string | null>(null);
+  const nativeSeqRef = useRef<number>(0);
+
+  const persistOperatorSessionMeta = (
+    sid: string | null,
+    work: typeof activeWork,
+    startedIso: string,
+    accMs: number,
+    resumedAt: number | null
+  ) => {
+    try {
+      if (!sid || !work) {
+        localStorage.removeItem(OP_ACTIVE_WORK_KEY);
+      } else {
+        localStorage.setItem(
+          OP_ACTIVE_WORK_KEY,
+          JSON.stringify({
+            sid,
+            activeWork: work,
+            startedAtIso: startedIso,
+            accumulatedMs: accMs,
+            lastResumedAt: resumedAt,
+          })
+        );
+      }
+    } catch {}
+  };
 
   const loadDataAndCache = async () => {
     setLoadingTasks(true);
@@ -426,15 +427,10 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     };
   }, [previewTaskId]);
 
-  const stopAllGps = () => {
-    if (Capacitor.isNativePlatform()) {
-      try {
-        BackgroundGps.stop();
-      } catch {}
-      if (nativeBgListenerRef.current?.remove) {
-        nativeBgListenerRef.current.remove();
-        nativeBgListenerRef.current = null;
-      }
+  const stopWebAndFallbackGps = () => {
+    if (nativeBgListenerRef.current?.remove) {
+      nativeBgListenerRef.current.remove();
+      nativeBgListenerRef.current = null;
     }
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -454,12 +450,81 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     } catch {}
   };
 
+  const stopAllGps = () => {
+    stopWebAndFallbackGps();
+    if (isNativeGps()) {
+      BackgroundGps.stop().catch(() => {});
+    }
+  };
+
   useEffect(() => {
-    return () => stopAllGps();
+    // Recuperar sesión de trabajo lineal activa si la app se reinició en medio del campo
+    const rawSaved = localStorage.getItem(OP_ACTIVE_WORK_KEY);
+    if (rawSaved) {
+      try {
+        const saved = JSON.parse(rawSaved);
+        if (saved && saved.sid && saved.activeWork) {
+          opSessionIdRef.current = saved.sid;
+          nativeSeqRef.current = 0;
+          const extraMs = saved.lastResumedAt ? Math.max(0, Date.now() - saved.lastResumedAt) : 0;
+          const restoredAccMs = (saved.accumulatedMs || 0) + extraMs;
+          setActiveWork(saved.activeWork);
+          setStartedAtIso(saved.startedAtIso || new Date().toISOString());
+          setAccumulatedMs(restoredAccMs);
+          setLastResumedAt(null);
+          setRecStatus('paused');
+          recStatusRef.current = 'paused';
+          persistOperatorSessionMeta(
+            saved.sid,
+            saved.activeWork,
+            saved.startedAtIso || new Date().toISOString(),
+            restoredAccMs,
+            null
+          );
+
+          if (isNativeGps()) {
+            drainNative(saved.sid, 0)
+              .then(async ({ points: rawPts, lastSeq }) => {
+                nativeSeqRef.current = lastSeq;
+                let accPts: RawGpsPoint[] = [];
+                let accDist = 0;
+                for (const pt of rawPts) {
+                  if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) continue;
+                  if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) continue;
+                  let delta = 0;
+                  if (accPts.length > 0) {
+                    const prev = accPts[accPts.length - 1];
+                    delta = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
+                    const dt = (pt.timestamp - prev.timestamp) / 1000;
+                    if (dt > 0.3 && delta / dt > 42) continue;
+                    if (isGpsJitterOrReverse(accPts, pt, delta)) continue;
+                  }
+                  accPts.push(pt);
+                  accDist += delta;
+                }
+                pointsRef.current = accPts;
+                distRef.current = accDist;
+                setPoints(accPts);
+                setDistanceM(accDist);
+                await BackgroundGps.stop().catch(() => {});
+              })
+              .catch(() => {});
+          }
+        }
+      } catch {}
+    }
+
+    return () => {
+      stopWebAndFallbackGps();
+    };
   }, []);
 
-  const pushIncomingPoint = (pt: RawGpsPoint) => {
+  const pushIncomingPoint = (pt: RawGpsPoint, seq?: number) => {
     if (recStatusRef.current !== 'recording') return;
+    if (typeof seq === 'number') {
+      if (seq <= nativeSeqRef.current) return;
+      nativeSeqRef.current = seq;
+    }
     setGpsAccuracy(Math.round(pt.accuracy));
 
     // Regla unificada: Límite del Partido de Carlos Tejedor (buffer 3 km)
@@ -475,8 +540,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
     if (speedKmH != null && speedKmH > 100) {
       if (highSpeedStartRef.current === null) {
-        highSpeedStartRef.current = Date.now();
-      } else if (Date.now() - highSpeedStartRef.current >= 30 * 60 * 1000) {
+        highSpeedStartRef.current = pt.timestamp || Date.now();
+      } else if ((pt.timestamp || Date.now()) - highSpeedStartRef.current >= 30 * 60 * 1000) {
         pauseLinearGps();
         setGpsError(
           'Se detectó velocidad de ruta sostenida (> 100 km/h por 30 min). Trabajo pausado preventivamente.'
@@ -495,6 +560,9 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     if (prevPts.length > 0) {
       const prev = prevPts[prevPts.length - 1];
       delta = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
+      // Filtro cinemático de velocidad aparente (> 42 m/s ~ 151 km/h entre dos puntos = salto espurio)
+      const dt = (pt.timestamp - prev.timestamp) / 1000;
+      if (dt > 0.3 && delta / dt > 42) return;
       // Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
       if (isGpsJitterOrReverse(prevPts, pt, delta)) return;
     }
@@ -506,29 +574,24 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     setDistanceM(distRef.current);
   };
 
-  // Drena los puntos acumulados por el Foreground Service nativo mientras la pantalla estuvo apagada
+  // Drena los puntos del diario nativo GpsJournal desde nativeSeqRef.current
   const drainNativeLocationBuffer = async () => {
-    if (!Capacitor.isNativePlatform() || !BackgroundGps.getBufferedLocations) return;
+    const sid = opSessionIdRef.current;
+    if (!sid || !isNativeGps()) return;
     try {
-      const res = await BackgroundGps.getBufferedLocations();
-      if (res && res.locations && res.locations.length > 0) {
-        for (const loc of res.locations) {
-          pushIncomingPoint({
-            lat: loc.latitude,
-            lon: loc.longitude,
-            timestamp: loc.timestamp || Date.now(),
-            accuracy: loc.accuracy || 5,
-            altitude: loc.altitude ?? undefined,
-            speed: loc.speed ?? undefined,
-          });
-        }
+      const { points: rawPts, lastSeq } = await drainNative(sid, nativeSeqRef.current);
+      for (const pt of rawPts) {
+        pushIncomingPoint(pt);
+      }
+      if (lastSeq > nativeSeqRef.current) {
+        nativeSeqRef.current = lastSeq;
       }
     } catch (err) {
-      console.warn('Error drenando buffer nativo en Operario:', err);
+      console.warn('Error drenando diario nativo en Operario:', err);
     }
   };
 
-  // Escuchar desbloqueo de pantalla y cambios de foco para volcar el buffer nativo
+  // Escuchar desbloqueo de pantalla y cambios de foco para volcar el diario nativo
   useEffect(() => {
     const handleWake = () => {
       if (document.visibilityState === 'visible' && recStatus === 'recording') {
@@ -549,7 +612,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       if (recStatus === 'recording') {
         drainNativeLocationBuffer();
       }
-    }, 2500);
+    }, 2000);
 
     return () => {
       document.removeEventListener('visibilitychange', handleWake);
@@ -560,7 +623,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   }, [recStatus]);
 
   const attachLinearGps = async () => {
-    stopAllGps();
+    stopWebAndFallbackGps();
     setGpsError(null);
     try {
       if ('wakeLock' in navigator) {
@@ -581,22 +644,20 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       return;
     }
 
-    if (Capacitor.isNativePlatform()) {
+    if (isNativeGps()) {
       const perm = await Geolocation.requestPermissions();
       if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
+        const sid = opSessionIdRef.current || crypto.randomUUID();
+        opSessionIdRef.current = sid;
         try {
-          await BackgroundGps.start();
+          await BackgroundGps.start({ sessionId: sid });
           nativeBgListenerRef.current = await BackgroundGps.addListener('onLocation', (loc) => {
-            pushIncomingPoint({
-              lat: loc.latitude,
-              lon: loc.longitude,
-              timestamp: loc.timestamp || Date.now(),
-              accuracy: loc.accuracy || 5,
-              altitude: loc.altitude ?? undefined,
-              speed: loc.speed ?? undefined,
-            });
+            pushIncomingPoint(toRawPoint(loc), loc.seq);
           });
-        } catch {}
+          return; // ÚNICA fuente GPS en Android nativo
+        } catch (err) {
+          console.warn('BackgroundGps falló en Operario, usando fallback:', err);
+        }
 
         nativeWatchRef.current = await Geolocation.watchPosition(
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 },
@@ -642,20 +703,26 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     );
   };
 
-  const pauseLinearGps = () => {
+  const pauseLinearGps = async () => {
+    await drainNativeLocationBuffer();
     stopAllGps();
+    let nextAcc = accumulatedMs;
     if (lastResumedAt !== null) {
-      setAccumulatedMs((prev) => prev + (Date.now() - lastResumedAt));
+      nextAcc = accumulatedMs + (Date.now() - lastResumedAt);
+      setAccumulatedMs(nextAcc);
     }
     setLastResumedAt(null);
     setRecStatus('paused');
     recStatusRef.current = 'paused';
+    persistOperatorSessionMeta(opSessionIdRef.current, activeWork, startedAtIso, nextAcc, null);
   };
 
   const resumeLinearGps = () => {
-    setLastResumedAt(Date.now());
+    const now = Date.now();
+    setLastResumedAt(now);
     setRecStatus('recording');
     recStatusRef.current = 'recording';
+    persistOperatorSessionMeta(opSessionIdRef.current, activeWork, startedAtIso, accumulatedMs, now);
     attachLinearGps();
   };
 
@@ -700,13 +767,19 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       linkedClaimId: task?.linked_claim_id || null,
     };
 
+    const nowIso = new Date().toISOString();
     setActiveWork(workObj);
-    setStartedAtIso(new Date().toISOString());
+    setStartedAtIso(nowIso);
 
     if (execMode === 'linear') {
+      const sid = crypto.randomUUID();
+      opSessionIdRef.current = sid;
+      nativeSeqRef.current = 0;
+      const nowMs = Date.now();
       setRecStatus('recording');
       recStatusRef.current = 'recording';
-      setLastResumedAt(Date.now());
+      setLastResumedAt(nowMs);
+      persistOperatorSessionMeta(sid, workObj, nowIso, 0, nowMs);
       attachLinearGps();
     } else {
       // Tarea Puntual: capturar ubicación única al abrir (sin trackeo continuo)
@@ -754,8 +827,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   };
 
   const openLinearFinishSheet = async (action: 'suspend' | 'submit') => {
-    await drainNativeLocationBuffer();
-    pauseLinearGps();
+    await pauseLinearGps();
 
     // Limpieza geométrica de lazos, retrocesos espurios y micro-ruido de esquinas
     const cleaned = cleanTrackLoopsAndJitter(pointsRef.current);
@@ -820,7 +892,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     }
 
     setSubmittingWork(true);
-    const sessionId = crypto.randomUUID();
+    const sessionId = opSessionIdRef.current || crypto.randomUUID();
     const finalInterventionId = activeWork.interventionId || crypto.randomUUID();
     const totalDuration = Math.max(1, elapsedSec);
 
@@ -853,6 +925,12 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     };
 
     await saveInterventionToOutbox(outboxItem);
+    if (opSessionIdRef.current && isNativeGps()) {
+      await BackgroundGps.clear({ sessionId: opSessionIdRef.current }).catch(() => {});
+    }
+    opSessionIdRef.current = null;
+    nativeSeqRef.current = 0;
+    persistOperatorSessionMeta(null, null, '', 0, null);
     let syncedNow = false;
     if (isOnline) {
       syncedNow = await syncSingleOutboxItem(outboxItem);
@@ -890,7 +968,14 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                 className="btn-outline"
                 onClick={() => {
                   if (window.confirm('¿Descartar esta sesión en curso sin guardar?')) {
+                    const oldSid = opSessionIdRef.current;
                     stopAllGps();
+                    if (oldSid && isNativeGps()) {
+                      BackgroundGps.clear({ sessionId: oldSid }).catch(() => {});
+                    }
+                    opSessionIdRef.current = null;
+                    nativeSeqRef.current = 0;
+                    persistOperatorSessionMeta(null, null, '', 0, null);
                     setActiveWork(null);
                     setRecStatus('idle');
                   }

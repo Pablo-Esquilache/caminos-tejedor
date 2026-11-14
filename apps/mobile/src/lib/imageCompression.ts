@@ -6,13 +6,19 @@ export interface CompressedPhotoResult {
   compressedSizeBytes: number;
 }
 
+interface HeaderDims {
+  width: number;
+  height: number;
+  orientation: number; // EXIF 1..8 (5..8 intercambian ancho/alto)
+}
+
 /**
- * Lee las dimensiones de una imagen JPEG/PNG/WebP leyendo únicamente los primeros 128 KB
- * del archivo, evitando decodificar fotos de 48-108 MP completas en memoria RAM.
+ * Lee las dimensiones y orientación EXIF de una imagen JPEG/PNG/WebP leyendo únicamente
+ * los primeros 128 KB del archivo, evitando decodificar fotos de 48-108 MP completas en RAM.
  */
 async function readImageDimensionsFromHeader(
   file: File | Blob
-): Promise<{ width: number; height: number } | null> {
+): Promise<HeaderDims | null> {
   try {
     const slice = file.slice(0, 131072);
     const buf = await slice.arrayBuffer();
@@ -23,12 +29,39 @@ async function readImageDimensionsFromHeader(
     if (len >= 24 && view.getUint32(0, false) === 0x89504e47) {
       const width = view.getUint32(16, false);
       const height = view.getUint32(20, false);
-      if (width > 0 && height > 0) return { width, height };
+      if (width > 0 && height > 0) return { width, height, orientation: 1 };
+    }
+
+    // WebP: "RIFF"...."WEBP"
+    if (
+      len >= 30 &&
+      view.getUint32(0, false) === 0x52494646 &&
+      view.getUint32(8, false) === 0x57454250
+    ) {
+      const chunk = view.getUint32(12, false);
+      if (chunk === 0x56503820 && len >= 30) {
+        // VP8
+        const w = view.getUint16(26, true) & 0x3fff;
+        const h = view.getUint16(28, true) & 0x3fff;
+        if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
+      } else if (chunk === 0x5650384c && len >= 25) {
+        // VP8L
+        const b = view.getUint32(21, true);
+        const w = (b & 0x3fff) + 1;
+        const h = ((b >> 14) & 0x3fff) + 1;
+        if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
+      } else if (chunk === 0x56503858 && len >= 30) {
+        // VP8X
+        const w = 1 + (view.getUint8(24) | (view.getUint8(25) << 8) | (view.getUint8(26) << 16));
+        const h = 1 + (view.getUint8(27) | (view.getUint8(28) << 8) | (view.getUint8(29) << 16));
+        if (w > 0 && h > 0) return { width: w, height: h, orientation: 1 };
+      }
     }
 
     // JPEG: FF D8
     if (len >= 4 && view.getUint16(0, false) === 0xffd8) {
       let offset = 2;
+      let orientation = 1;
       while (offset + 4 < len) {
         if (view.getUint8(offset) !== 0xff) break;
         while (offset < len && view.getUint8(offset) === 0xff) offset++;
@@ -41,7 +74,32 @@ async function readImageDimensionsFromHeader(
 
         if (offset + 2 > len) break;
         const segLen = view.getUint16(offset, false);
-        if (segLen < 2 || offset + segLen > len) break;
+        if (segLen < 2) break;
+
+        // APP1 (EXIF): leer etiqueta Orientation (0x0112)
+        if (
+          marker === 0xe1 &&
+          offset + 10 <= len &&
+          view.getUint32(offset + 2, false) === 0x45786966
+        ) {
+          const tiff = offset + 8;
+          if (tiff + 8 <= len) {
+            const little = view.getUint16(tiff, false) === 0x4949;
+            const ifd0 = tiff + view.getUint32(tiff + 4, little);
+            if (ifd0 + 2 <= len) {
+              const entries = view.getUint16(ifd0, little);
+              for (let i = 0; i < entries; i++) {
+                const e = ifd0 + 2 + i * 12;
+                if (e + 12 > len) break;
+                if (view.getUint16(e, little) === 0x0112) {
+                  const val = view.getUint16(e + 8, little);
+                  if (val >= 1 && val <= 8) orientation = val;
+                  break;
+                }
+              }
+            }
+          }
+        }
 
         // SOF0..SOF15 (excepto DHT=C4, JPG=C8, DAC=CC)
         if (
@@ -54,10 +112,14 @@ async function readImageDimensionsFromHeader(
           if (offset + 7 <= len) {
             const height = view.getUint16(offset + 3, false);
             const width = view.getUint16(offset + 5, false);
-            if (width > 0 && height > 0) return { width, height };
+            if (width > 0 && height > 0) {
+              return { width, height, orientation };
+            }
           }
           break;
         }
+
+        if (offset + segLen > len) break;
         offset += segLen;
       }
     }
@@ -67,10 +129,18 @@ async function readImageDimensionsFromHeader(
   return null;
 }
 
+function fitWithin(w: number, h: number, maxDim: number): { tw: number; th: number } {
+  if (w <= maxDim && h <= maxDim) return { tw: w, th: h };
+  if (w >= h) {
+    return { tw: maxDim, th: Math.max(1, Math.round((h * maxDim) / w)) };
+  }
+  return { tw: Math.max(1, Math.round((w * maxDim) / h)), th: maxDim };
+}
+
 /**
  * Decodifica y redimensiona de forma ultraliviana para móviles.
- * Utiliza createImageBitmap con resizeWidth/resizeHeight sin decodificar primero
- * la imagen completa en RAM, evitando errores de "memoria insuficiente" en PWA Android.
+ * Utiliza createImageBitmap con resizeWidth/resizeHeight y siempre dibuja con
+ * ctx.drawImage(bmp, 0, 0, tw, th) para evitar recortes si el navegador ignora resizeWidth.
  */
 async function createResizedCanvas(
   file: File | Blob,
@@ -79,47 +149,46 @@ async function createResizedCanvas(
   if (typeof createImageBitmap === 'function') {
     try {
       const dims = await readImageDimensionsFromHeader(file);
-      let resizeOpts: ImageBitmapOptions = {
-        resizeWidth: maxDimension,
-        resizeQuality: 'medium',
-      };
+      let bmp: ImageBitmap;
 
       if (dims) {
-        let targetW = dims.width;
-        let targetH = dims.height;
-        if (dims.width > maxDimension || dims.height > maxDimension) {
-          if (dims.width >= dims.height) {
-            targetW = maxDimension;
-            targetH = Math.max(1, Math.round((dims.height * maxDimension) / dims.width));
-          } else {
-            targetH = maxDimension;
-            targetW = Math.max(1, Math.round((dims.width * maxDimension) / dims.height));
-          }
-        }
-        resizeOpts = {
-          resizeWidth: targetW,
-          resizeHeight: targetH,
+        const swapped = dims.orientation >= 5 && dims.orientation <= 8;
+        const dispW = swapped ? dims.height : dims.width;
+        const dispH = swapped ? dims.width : dims.height;
+        const { tw, th } = fitWithin(dispW, dispH, maxDimension);
+        bmp = await createImageBitmap(file, {
+          resizeWidth: tw,
+          resizeHeight: th,
           resizeQuality: 'medium',
-        };
+          imageOrientation: 'from-image',
+        } as ImageBitmapOptions);
+      } else {
+        bmp = await createImageBitmap(file, {
+          imageOrientation: 'from-image',
+        } as ImageBitmapOptions);
       }
 
-      const resizedBitmap = await createImageBitmap(file, resizeOpts);
-      const canvas = document.createElement('canvas');
-      canvas.width = resizedBitmap.width;
-      canvas.height = resizedBitmap.height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(resizedBitmap, 0, 0);
-        resizedBitmap.close();
-        return canvas;
+      try {
+        // Calcular dimensiones finales a partir del bitmap real devuelto
+        const { tw, th } = fitWithin(bmp.width, bmp.height, maxDimension);
+        const canvas = document.createElement('canvas');
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // Escalar explícitamente a (tw, th) por si el navegador ignoró resizeWidth/resizeHeight
+          ctx.drawImage(bmp, 0, 0, tw, th);
+          return canvas;
+        }
+      } finally {
+        bmp.close();
       }
-      resizedBitmap.close();
     } catch {
       // Continuar con fallback estándar si createImageBitmap falla
     }
   }
 
-  // 2. Fallback estándar con HTMLImageElement
+  // Fallback estándar con HTMLImageElement
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -127,28 +196,17 @@ async function createResizedCanvas(
       URL.revokeObjectURL(url);
       const width = img.naturalWidth || img.width;
       const height = img.naturalHeight || img.height;
-
-      let targetW = width;
-      let targetH = height;
-      if (width > maxDimension || height > maxDimension) {
-        if (width >= height) {
-          targetW = maxDimension;
-          targetH = Math.max(1, Math.round((height * maxDimension) / width));
-        } else {
-          targetH = maxDimension;
-          targetW = Math.max(1, Math.round((width * maxDimension) / height));
-        }
-      }
+      const { tw, th } = fitWithin(width, height, maxDimension);
 
       const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
+      canvas.width = tw;
+      canvas.height = th;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         reject(new Error('No se pudo inicializar el contexto de imagen.'));
         return;
       }
-      ctx.drawImage(img, 0, 0, targetW, targetH);
+      ctx.drawImage(img, 0, 0, tw, th);
       resolve(canvas);
     };
     img.onerror = (err) => {
@@ -172,46 +230,72 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
   });
 }
 
+async function canvasToJpegUnder(
+  canvas: HTMLCanvasElement,
+  startQuality: number,
+  minQuality: number,
+  maxBytes: number
+): Promise<Blob> {
+  let q = startQuality;
+  let blob = await canvasToJpegBlob(canvas, q);
+  while (blob.size > maxBytes && q - 0.1 >= minQuality) {
+    q = Math.round((q - 0.1) * 100) / 100;
+    blob = await canvasToJpegBlob(canvas, q);
+  }
+  return blob;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('No se pudo generar vista previa de miniatura.'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Error leyendo miniatura.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 /**
  * Comprime la foto en el cliente antes de subirla o guardarla en la cola offline:
- * - Foto principal: máx 1440px (JPEG 0.75, ideal para obras viales y reportes livianos < 150 KB)
- * - Miniatura (thumbnail): máx 280px (JPEG 0.65)
- * - Procesa en serie para mantener el consumo de memoria por debajo de 30 MB en móviles.
+ * - Foto principal: máx 1280px (JPEG <= 150 KB con ajuste iterativo de calidad)
+ * - Miniatura (thumbnail): máx 280px (JPEG 0.65, ~8-12 KB)
+ * - thumbDataUrl persistente (data:image/jpeg;base64 sobre la miniatura de 8 KB) que no caduca al reiniciar la app.
  */
 export async function compressClaimPhoto(file: File | Blob): Promise<CompressedPhotoResult> {
-  // 1. Redimensionar foto principal (máx 1280px, JPEG 0.72 para bajo consumo de RAM en PWA)
+  // 1. Redimensionar foto principal (máx 1280px, objetivo <= 150 KB)
   const mainCanvas = await createResizedCanvas(file, 1280);
-  const photoBlob = await canvasToJpegBlob(mainCanvas, 0.72);
+  let photoBlob: Blob;
+  let thumbCanvas: HTMLCanvasElement;
+  try {
+    photoBlob = await canvasToJpegUnder(mainCanvas, 0.72, 0.42, 150 * 1024);
 
-  // 2. Generar miniatura liviana a partir del lienzo ya reducido (ahorra 95% de CPU/RAM)
-  const thumbCanvas = document.createElement('canvas');
-  const tMax = 280;
-  let tW = mainCanvas.width;
-  let tH = mainCanvas.height;
-  if (tW > tMax || tH > tMax) {
-    if (tW >= tH) {
-      tW = tMax;
-      tH = Math.max(1, Math.round((mainCanvas.height * tMax) / mainCanvas.width));
-    } else {
-      tH = tMax;
-      tW = Math.max(1, Math.round((mainCanvas.width * tMax) / mainCanvas.height));
+    // 2. Generar miniatura liviana a partir del lienzo ya reducido (ahorra 95% de CPU/RAM)
+    thumbCanvas = document.createElement('canvas');
+    const { tw, th } = fitWithin(mainCanvas.width, mainCanvas.height, 280);
+    thumbCanvas.width = tw;
+    thumbCanvas.height = th;
+    const tCtx = thumbCanvas.getContext('2d');
+    if (tCtx) {
+      tCtx.drawImage(mainCanvas, 0, 0, tw, th);
     }
+  } finally {
+    // Liberar memoria de mainCanvas de inmediato
+    mainCanvas.width = 0;
+    mainCanvas.height = 0;
   }
-  thumbCanvas.width = tW;
-  thumbCanvas.height = tH;
-  const tCtx = thumbCanvas.getContext('2d');
-  if (tCtx) {
-    tCtx.drawImage(mainCanvas, 0, 0, tW, tH);
+
+  let thumbBlob: Blob;
+  try {
+    thumbBlob = await canvasToJpegBlob(thumbCanvas, 0.65);
+  } finally {
+    thumbCanvas.width = 0;
+    thumbCanvas.height = 0;
   }
-  // Liberar memoria de mainCanvas de inmediato
-  mainCanvas.width = 0;
-  mainCanvas.height = 0;
 
-  const thumbBlob = await canvasToJpegBlob(thumbCanvas, 0.65);
-  thumbCanvas.width = 0;
-  thumbCanvas.height = 0;
-
-  const thumbDataUrl = URL.createObjectURL(thumbBlob);
+  // Generar Data URL sobre la miniatura ya comprimida (~10 KB), segura para IndexedDB offline
+  const thumbDataUrl = await blobToDataUrl(thumbBlob);
 
   return {
     photoBlob,
@@ -290,6 +374,8 @@ export async function generateSimulatedClaimPhoto(
       0.88
     );
   });
+  canvas.width = 0;
+  canvas.height = 0;
 
   return compressClaimPhoto(rawBlob);
 }

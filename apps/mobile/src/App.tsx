@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { App as CapApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import { Geolocation } from '@capacitor/geolocation';
 import {
   MapPin,
@@ -55,35 +55,7 @@ import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
 import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSection';
 import { NotificationsView } from './components/NotificationsView';
 import { OperatorWorkspace } from './components/OperatorWorkspace';
-
-// Interfaz para el plugin nativo de Servicio en Primer Plano (Foreground Service)
-interface BackgroundGpsPlugin {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  getBufferedLocations?(): Promise<{
-    locations: Array<{
-      latitude: number;
-      longitude: number;
-      accuracy: number;
-      altitude?: number | null;
-      speed?: number | null;
-      timestamp: number;
-    }>;
-  }>;
-  addListener(
-    eventName: 'onLocation',
-    listenerFunc: (loc: {
-      latitude: number;
-      longitude: number;
-      accuracy: number;
-      altitude?: number | null;
-      speed?: number | null;
-      timestamp: number;
-    }) => void
-  ): Promise<any>;
-}
-
-const BackgroundGps = registerPlugin<BackgroundGpsPlugin>('BackgroundGps');
+import { BackgroundGps, isNativeGps, toRawPoint, drainNative } from './lib/nativeGps';
 
 function playAlertTone() {
   try {
@@ -274,23 +246,61 @@ export const App: React.FC = () => {
       }
     });
 
-    // Recuperar grabación activa si la app se cerró a mitad del camino
-    getActiveRecordingSession().then((saved) => {
-      if (saved && saved.points.length > 0) {
+    // Recuperar grabación activa si la app se cerró a mitad del camino (incluyendo diario nativo GpsJournal)
+    getActiveRecordingSession().then(async (saved) => {
+      if (!saved) return;
+      let baseSession: ActiveRecordingSession = saved;
+      if (isNativeGps()) {
+        try {
+          const { points: rawPts, lastSeq } = await drainNative(
+            saved.tripUuid,
+            saved.nativeSeq ?? 0
+          );
+          if (rawPts.length > 0) {
+            let cur = { ...saved };
+            for (const pt of rawPts) {
+              if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) continue;
+              if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) {
+                cur.discardedPointsCount += 1;
+                continue;
+              }
+              const prev = cur.points.length > 0 ? cur.points[cur.points.length - 1] : null;
+              let delta = 0;
+              if (prev) {
+                delta = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
+                const dt = (pt.timestamp - prev.timestamp) / 1000;
+                if (dt > 0.3 && delta / dt > 42) {
+                  cur.discardedPointsCount += 1;
+                  continue;
+                }
+                if (isGpsJitterOrReverse(cur.points, pt, delta)) continue;
+              }
+              cur.distanceMeters += delta;
+              cur.points = [...cur.points, pt];
+            }
+            cur.nativeSeq = lastSeq;
+            baseSession = cur;
+          }
+          await BackgroundGps.stop().catch(() => {});
+        } catch {}
+      }
+
+      if (baseSession.points.length > 0) {
         // Si estaba grabando cuando se cerró, lo dejamos en pausa para que el usuario decida reanudar o finalizar
         const recovered: ActiveRecordingSession =
-          saved.status === 'recording'
+          baseSession.status === 'recording'
             ? {
-                ...saved,
+                ...baseSession,
                 status: 'paused',
                 accumulatedDurationMs:
-                  saved.accumulatedDurationMs +
-                  (saved.lastResumedAt ? Date.now() - saved.lastResumedAt : 0),
+                  baseSession.accumulatedDurationMs +
+                  (baseSession.lastResumedAt ? Date.now() - baseSession.lastResumedAt : 0),
                 lastResumedAt: null,
               }
-            : saved;
+            : baseSession;
+        sessionRef.current = recovered;
         setRecordingSession(recovered);
-        saveActiveRecordingSession(recovered);
+        await saveActiveRecordingSession(recovered);
         setRecoveredNotice(true);
       }
     });
@@ -450,15 +460,10 @@ export const App: React.FC = () => {
     }
   };
 
-  const stopGpsWatchers = () => {
-    if (Capacitor.isNativePlatform()) {
-      try {
-        BackgroundGps.stop();
-      } catch {}
-      if (nativeBgListenerRef.current?.remove) {
-        nativeBgListenerRef.current.remove();
-        nativeBgListenerRef.current = null;
-      }
+  const stopWebAndFallbackWatchers = () => {
+    if (nativeBgListenerRef.current?.remove) {
+      nativeBgListenerRef.current.remove();
+      nativeBgListenerRef.current = null;
     }
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -479,48 +484,61 @@ export const App: React.FC = () => {
     releaseWakeLock();
   };
 
-  // Procesa cada punto GPS entrante y lo guarda de inmediato en IndexedDB/SQLite local
-  const handleIncomingPoint = async (pt: RawGpsPoint) => {
-    const cur = sessionRef.current;
-    if (!cur || cur.status !== 'recording') return;
+  const stopNativeSafely = async () => {
+    stopWebAndFallbackWatchers();
+    if (isNativeGps()) {
+      try {
+        await BackgroundGps.stop();
+      } catch {}
+    }
+  };
 
-    setLastAccuracy(Math.round(pt.accuracy));
+  const stopGpsWatchers = () => {
+    stopWebAndFallbackWatchers();
+    if (isNativeGps()) {
+      BackgroundGps.stop().catch(() => {});
+    }
+  };
 
+  // Función pura que aplica los filtros de geocerca, velocidad y cinemática sobre una sesión
+  const reduceIncomingPoint = (
+    cur: ActiveRecordingSession,
+    pt: RawGpsPoint
+  ): { next: ActiveRecordingSession; pauseMsg?: string } => {
     // 1. Filtro geográfico oficial del Partido de Carlos Tejedor (con margen de 3 km)
     if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
-      pauseRecording();
-      setGpsError(
-        'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.'
-      );
-      return;
+      return {
+        next: cur,
+        pauseMsg:
+          'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.',
+      };
     }
 
     // 2. Filtro de velocidad sostenida en ruta (30 minutos continuos a > 100 km/h)
     const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
     if (speedKmH != null && speedKmH > 100) {
       if (highSpeedStartRef.current === null) {
-        highSpeedStartRef.current = Date.now();
-      } else if (Date.now() - highSpeedStartRef.current >= 30 * 60 * 1000) {
-        pauseRecording();
-        setGpsError(
-          'Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 minutos). Grabación pausada preventivamente.'
-        );
+        highSpeedStartRef.current = pt.timestamp || Date.now();
+      } else if ((pt.timestamp || Date.now()) - highSpeedStartRef.current >= 30 * 60 * 1000) {
         highSpeedStartRef.current = null;
-        return;
+        return {
+          next: cur,
+          pauseMsg:
+            'Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 minutos). Grabación pausada preventivamente.',
+        };
       }
     } else if (speedKmH != null && speedKmH < 90) {
       highSpeedStartRef.current = null;
     }
 
-    // 3. Filtrar puntos con precisión muy mala (> umbral configurable)
+    // 3. Filtrar puntos con precisión mala (> umbral configurable)
     if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) {
-      const updatedDiscarded: ActiveRecordingSession = {
-        ...cur,
-        discardedPointsCount: cur.discardedPointsCount + 1,
+      return {
+        next: {
+          ...cur,
+          discardedPointsCount: cur.discardedPointsCount + 1,
+        },
       };
-      setRecordingSession(updatedDiscarded);
-      await saveActiveRecordingSession(updatedDiscarded);
-      return;
     }
 
     const prevPoint = cur.points.length > 0 ? cur.points[cur.points.length - 1] : null;
@@ -528,41 +546,72 @@ export const App: React.FC = () => {
 
     if (prevPoint) {
       deltaMeters = calculateDistanceMeters(prevPoint.lat, prevPoint.lon, pt.lat, pt.lon);
-      // Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
+      // 4. Filtro cinemático de velocidad aparente (> 42 m/s ~ 151 km/h entre dos puntos = salto de antena)
+      const dt = (pt.timestamp - prevPoint.timestamp) / 1000;
+      if (dt > 0.3 && deltaMeters / dt > 42) {
+        return {
+          next: {
+            ...cur,
+            discardedPointsCount: cur.discardedPointsCount + 1,
+          },
+        };
+      }
+      // 5. Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
       if (isGpsJitterOrReverse(cur.points, pt, deltaMeters)) {
-        return;
+        return { next: cur };
       }
     }
 
-    const updated: ActiveRecordingSession = {
-      ...cur,
-      distanceMeters: cur.distanceMeters + deltaMeters,
-      points: [...cur.points, pt],
+    return {
+      next: {
+        ...cur,
+        distanceMeters: cur.distanceMeters + deltaMeters,
+        points: [...cur.points, pt],
+      },
     };
-
-    setRecordingSession(updated);
-    await saveActiveRecordingSession(updated);
   };
 
-  // Drena los puntos acumulados por el Foreground Service nativo de Android mientras la pantalla estuvo bloqueada
-  const drainNativeLocationBuffer = async () => {
-    if (!Capacitor.isNativePlatform() || !BackgroundGps.getBufferedLocations) return;
-    try {
-      const res = await BackgroundGps.getBufferedLocations();
-      if (res && res.locations && res.locations.length > 0) {
-        for (const loc of res.locations) {
-          await handleIncomingPoint({
-            lat: loc.latitude,
-            lon: loc.longitude,
-            timestamp: loc.timestamp || Date.now(),
-            accuracy: loc.accuracy || 5,
-            altitude: loc.altitude ?? undefined,
-            speed: loc.speed ?? undefined,
-          });
-        }
+  // Procesa un lote de puntos GPS de forma atómica sobre sessionRef.current (sin pisar estado en lotes)
+  const ingestPoints = async (pts: RawGpsPoint[], newNativeSeq?: number) => {
+    let cur = sessionRef.current;
+    if (!cur || cur.status !== 'recording') return;
+
+    let pauseMsg: string | undefined;
+    for (const pt of pts) {
+      setLastAccuracy(Math.round(pt.accuracy));
+      const res = reduceIncomingPoint(cur, pt);
+      cur = res.next;
+      if (res.pauseMsg) {
+        pauseMsg = res.pauseMsg;
+        break;
       }
-    } catch (err) {
-      console.warn('Error drenando buffer nativo GPS:', err);
+    }
+
+    if (newNativeSeq !== undefined && newNativeSeq > (cur.nativeSeq ?? 0)) {
+      cur = { ...cur, nativeSeq: newNativeSeq };
+    }
+
+    sessionRef.current = cur;
+    setRecordingSession(cur);
+    await saveActiveRecordingSession(cur);
+
+    if (pauseMsg) {
+      await pauseRecording();
+      setGpsError(pauseMsg);
+    }
+  };
+
+  const handleIncomingPoint = async (pt: RawGpsPoint, seq?: number) => {
+    await ingestPoints([pt], seq);
+  };
+
+  // Drena los puntos del diario nativo GpsJournal desde el último cursor nativeSeq
+  const drainNativeLocationBuffer = async () => {
+    const cur = sessionRef.current;
+    if (!cur || !isNativeGps()) return;
+    const { points: rawPts, lastSeq } = await drainNative(cur.tripUuid, cur.nativeSeq ?? 0);
+    if (rawPts.length > 0 || lastSeq > (cur.nativeSeq ?? 0)) {
+      await ingestPoints(rawPts, lastSeq);
     }
   };
 
@@ -587,7 +636,7 @@ export const App: React.FC = () => {
       if (sessionRef.current?.status === 'recording') {
         drainNativeLocationBuffer();
       }
-    }, 2500);
+    }, 2000);
 
     return () => {
       document.removeEventListener('visibilitychange', handleScreenWake);
@@ -597,10 +646,12 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const startGpsCapture = (isSimulatorMode: boolean) => {
-    stopGpsWatchers();
+  const startGpsCapture = (isSimulatorMode: boolean, sessionId?: string) => {
+    stopWebAndFallbackWatchers();
     setGpsError(null);
     requestWakeLock();
+
+    const activeSessionId = sessionId || sessionRef.current?.tripUuid || 'current';
 
     if (isSimulatorMode) {
       const route = SAMPLE_TEJEDOR_ROUTES[selectedSampleIdx] || SAMPLE_TEJEDOR_ROUTES[0];
@@ -627,28 +678,23 @@ export const App: React.FC = () => {
       return;
     }
 
-    // Modo nativo en Android (Capacitor) con Foreground Service persistente para pantalla bloqueada
-    if (Capacitor.isNativePlatform()) {
+    // Modo nativo en Android (Capacitor): ÚNICA fuente GPS en Foreground Service con diario en disco
+    if (isNativeGps()) {
       Geolocation.requestPermissions().then(async (perm) => {
         if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
-          // 1. Iniciar Servicio en Primer Plano nativo de Android (Foreground Service)
           try {
-            await BackgroundGps.start();
+            await BackgroundGps.start({ sessionId: activeSessionId });
             nativeBgListenerRef.current = await BackgroundGps.addListener('onLocation', (loc) => {
-              handleIncomingPoint({
-                lat: loc.latitude,
-                lon: loc.longitude,
-                timestamp: loc.timestamp || Date.now(),
-                accuracy: loc.accuracy || 5,
-                altitude: loc.altitude ?? undefined,
-                speed: loc.speed ?? undefined,
-              });
+              const curSeq = sessionRef.current?.nativeSeq ?? 0;
+              if (typeof loc.seq === 'number' && loc.seq <= curSeq) return;
+              handleIncomingPoint(toRawPoint(loc), loc.seq);
             });
+            return; // IMPORTANTE: no iniciar Geolocation.watchPosition en paralelo
           } catch (err) {
-            console.warn('Servicio nativo BackgroundGps no disponible, usando fallback:', err);
+            console.warn('Servicio nativo BackgroundGps falló al iniciar, usando fallback:', err);
           }
 
-          // 2. Watcher nativo de respaldo
+          // Fallback exclusivo si el Foreground Service falló al arrancar
           Geolocation.watchPosition(
             {
               enableHighAccuracy: true,
@@ -656,17 +702,15 @@ export const App: React.FC = () => {
               maximumAge: 1000,
             },
             (pos, err) => {
-              if (err) return;
-              if (pos) {
-                handleIncomingPoint({
-                  lat: pos.coords.latitude,
-                  lon: pos.coords.longitude,
-                  timestamp: pos.timestamp || Date.now(),
-                  accuracy: pos.coords.accuracy || 5,
-                  altitude: pos.coords.altitude ?? undefined,
-                  speed: pos.coords.speed ?? undefined,
-                });
-              }
+              if (err || !pos) return;
+              handleIncomingPoint({
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                timestamp: pos.timestamp || Date.now(),
+                accuracy: pos.coords.accuracy || 5,
+                altitude: pos.coords.altitude ?? undefined,
+                speed: pos.coords.speed ?? undefined,
+              });
             }
           ).then((id) => {
             nativeWatchIdRef.current = id;
@@ -737,6 +781,7 @@ export const App: React.FC = () => {
       distanceMeters: 0,
       points: [],
       discardedPointsCount: 0,
+      nativeSeq: 0,
     };
 
     if (useSimulator) {
@@ -747,52 +792,60 @@ export const App: React.FC = () => {
     }
 
     setRecoveredNotice(false);
+    sessionRef.current = newSession;
     setRecordingSession(newSession);
     await saveActiveRecordingSession(newSession);
-    startGpsCapture(useSimulator);
+    startGpsCapture(useSimulator, newSession.tripUuid);
   };
 
   const pauseRecording = async () => {
-    if (!recordingSession || recordingSession.status !== 'recording') return;
+    const current = sessionRef.current;
+    if (!current || current.status !== 'recording') return;
     await drainNativeLocationBuffer();
-    stopGpsWatchers();
-    const additionalMs = recordingSession.lastResumedAt
-      ? Date.now() - recordingSession.lastResumedAt
+    await stopNativeSafely();
+    const latest = sessionRef.current || current;
+    const additionalMs = latest.lastResumedAt
+      ? Date.now() - latest.lastResumedAt
       : 0;
     const paused: ActiveRecordingSession = {
-      ...recordingSession,
+      ...latest,
       status: 'paused',
-      accumulatedDurationMs: recordingSession.accumulatedDurationMs + additionalMs,
+      accumulatedDurationMs: latest.accumulatedDurationMs + additionalMs,
       lastResumedAt: null,
     };
+    sessionRef.current = paused;
     setRecordingSession(paused);
     await saveActiveRecordingSession(paused);
   };
 
   const resumeRecording = async () => {
-    if (!recordingSession || recordingSession.status !== 'paused') return;
+    const current = sessionRef.current;
+    if (!current || current.status !== 'paused') return;
     const resumed: ActiveRecordingSession = {
-      ...recordingSession,
+      ...current,
       status: 'recording',
       lastResumedAt: Date.now(),
     };
     setRecoveredNotice(false);
+    sessionRef.current = resumed;
     setRecordingSession(resumed);
     await saveActiveRecordingSession(resumed);
-    startGpsCapture(useSimulator);
+    startGpsCapture(useSimulator, resumed.tripUuid);
   };
 
   const finishToConfirmation = async () => {
-    if (!recordingSession) return;
+    if (!sessionRef.current) return;
     await drainNativeLocationBuffer();
-    stopGpsWatchers();
+    await stopNativeSafely();
+    const latest = sessionRef.current;
+    if (!latest) return;
     const additionalMs =
-      recordingSession.status === 'recording' && recordingSession.lastResumedAt
-        ? Date.now() - recordingSession.lastResumedAt
+      latest.status === 'recording' && latest.lastResumedAt
+        ? Date.now() - latest.lastResumedAt
         : 0;
 
     // Limpieza geométrica de lazos, rebotes y micro-ruido de esquinas antes de confirmar
-    const cleaned = cleanTrackLoopsAndJitter(recordingSession.points);
+    const cleaned = cleanTrackLoopsAndJitter(latest.points);
     let cleanedDistance = 0;
     for (let i = 1; i < cleaned.length; i++) {
       cleanedDistance += calculateDistanceMeters(
@@ -804,20 +857,26 @@ export const App: React.FC = () => {
     }
 
     const confirming: ActiveRecordingSession = {
-      ...recordingSession,
+      ...latest,
       status: 'confirming',
-      accumulatedDurationMs: recordingSession.accumulatedDurationMs + additionalMs,
+      accumulatedDurationMs: latest.accumulatedDurationMs + additionalMs,
       lastResumedAt: null,
       points: cleaned,
-      distanceMeters: cleanedDistance > 0 ? cleanedDistance : recordingSession.distanceMeters,
+      distanceMeters: cleanedDistance > 0 ? cleanedDistance : latest.distanceMeters,
     };
+    sessionRef.current = confirming;
     setRecordingSession(confirming);
     await saveActiveRecordingSession(confirming);
   };
 
   const cancelAndDiscardRecording = async () => {
-    stopGpsWatchers();
+    const oldSessionId = sessionRef.current?.tripUuid;
+    await stopNativeSafely();
+    if (oldSessionId && isNativeGps()) {
+      await BackgroundGps.clear({ sessionId: oldSessionId }).catch(() => {});
+    }
     await clearActiveRecordingSession();
+    sessionRef.current = null;
     setRecordingSession(null);
     setRecoveredNotice(false);
     setGpsError(null);
@@ -838,9 +897,10 @@ export const App: React.FC = () => {
     const endedAt = new Date().toISOString();
     const durationSec = Math.max(1, Math.round(recordingSession.accumulatedDurationMs / 1000));
     const cleanName = roadNameInput.trim() || 'Camino rural sin nombre';
+    const savedTripUuid = recordingSession.tripUuid;
 
     const outboxItem: PendingTripOutboxItem = {
-      id: recordingSession.tripUuid,
+      id: savedTripUuid,
       original_name: cleanName,
       started_at: recordingSession.startedAt,
       ended_at: endedAt,
@@ -855,7 +915,11 @@ export const App: React.FC = () => {
 
     // 1. Primero guardar en el dispositivo (para no perder jamás el recorrido si se corta internet)
     await saveTripToOutbox(outboxItem);
+    if (isNativeGps()) {
+      await BackgroundGps.clear({ sessionId: savedTripUuid }).catch(() => {});
+    }
     await clearActiveRecordingSession();
+    sessionRef.current = null;
     setRecordingSession(null);
 
     // 2. Si hay señal, intentar enviarlo ahora mismo a Supabase

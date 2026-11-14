@@ -139,6 +139,23 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
   // Listado paginado de Mis Reclamos + Cola Offline
   const [claims, setClaims] = useState<ClaimSummary[]>([]);
   const [outboxClaims, setOutboxClaims] = useState<PendingClaimOutboxItem[]>([]);
+  const [offlineBlobUrls, setOfflineBlobUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const created: Record<string, string> = {};
+    for (const item of outboxClaims) {
+      if (
+        item.thumb_blob &&
+        (!item.thumb_data_url || item.thumb_data_url.startsWith('blob:'))
+      ) {
+        created[item.id] = URL.createObjectURL(item.thumb_blob);
+      }
+    }
+    setOfflineBlobUrls(created);
+    return () => {
+      Object.values(created).forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [outboxClaims]);
   const [thumbSignedUrls, setThumbSignedUrls] = useState<Record<string, string>>({});
   const [loadingList, setLoadingList] = useState(false);
   const [page, setPage] = useState(0);
@@ -696,11 +713,16 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
       </div>
 
       {/* Reclamos en cola local esperando señal */}
-      {outboxClaims.map((item) => (
+      {outboxClaims.map((item) => {
+        const safeThumbSrc =
+          item.thumb_data_url && !item.thumb_data_url.startsWith('blob:')
+            ? item.thumb_data_url
+            : offlineBlobUrls[item.id] || item.thumb_data_url || null;
+        return (
         <div key={item.id} className="trip-row outbox-row">
           <div className="claim-row-left">
-            {item.thumb_data_url && (
-              <img src={item.thumb_data_url} alt="" className="claim-list-thumb" />
+            {safeThumbSrc && (
+              <img src={safeThumbSrc} alt="" className="claim-list-thumb" />
             )}
             <div>
               <span className="category-chip">{item.category_name}</span>
@@ -719,7 +741,8 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
             Guardado en el celular (sin señal)
           </span>
         </div>
-      ))}
+        );
+      })}
 
       {claims.length === 0 && outboxClaims.length === 0 && !loadingList && (
         <div className="card empty-state">
