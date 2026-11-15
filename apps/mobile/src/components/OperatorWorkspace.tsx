@@ -520,10 +520,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   }, []);
 
   const opDrainingRef = useRef<Promise<void> | null>(null);
-  const opPausingRef = useRef<boolean>(false);
+  const opPauseInFlightRef = useRef<boolean>(false);
+  const opRejectPointsRef = useRef<boolean>(false);
 
   const pushIncomingPoint = (pt: RawGpsPoint, seq?: number) => {
-    if (recStatusRef.current !== 'recording' || opPausingRef.current) return;
+    if (recStatusRef.current !== 'recording' || opRejectPointsRef.current) return;
     if (typeof seq === 'number') {
       if (seq <= nativeSeqRef.current) return;
       nativeSeqRef.current = seq;
@@ -532,6 +533,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     // Regla unificada: Límite del Partido de Carlos Tejedor (buffer 3 km)
     if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
+      opRejectPointsRef.current = true;
       void pauseLinearGps().then(() =>
         setGpsError(
           'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Trabajo pausado preventivamente.'
@@ -547,6 +549,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
         highSpeedStartRef.current = pt.timestamp || Date.now();
       } else if ((pt.timestamp || Date.now()) - highSpeedStartRef.current >= 30 * 60 * 1000) {
         highSpeedStartRef.current = null;
+        opRejectPointsRef.current = true;
         void pauseLinearGps().then(() =>
           setGpsError(
             'Se detectó velocidad de ruta sostenida (> 100 km/h por 30 min). Trabajo pausado preventivamente.'
@@ -592,7 +595,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
           nativeSeqRef.current = lastSeq;
         }
         for (const pt of rawPts) {
-          if (recStatusRef.current !== 'recording' || opPausingRef.current) break;
+          if (recStatusRef.current !== 'recording' || opRejectPointsRef.current) break;
           pushIncomingPoint(pt);
         }
       } catch (err) {
@@ -725,8 +728,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   };
 
   const pauseLinearGps = async () => {
-    if (opPausingRef.current) return;
-    opPausingRef.current = true;
+    if (opPauseInFlightRef.current) return;
+    opPauseInFlightRef.current = true;
     try {
       await drainNativeLocationBuffer();
       stopWebAndFallbackGps();
@@ -746,12 +749,13 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       recStatusRef.current = 'paused';
       persistOperatorSessionMeta(opSessionIdRef.current, activeWork, startedAtIso, nextAcc, null);
     } finally {
-      opPausingRef.current = false;
+      opPauseInFlightRef.current = false;
     }
   };
 
   const resumeLinearGps = () => {
     const now = Date.now();
+    opRejectPointsRef.current = false;
     setLastResumedAt(now);
     setRecStatus('recording');
     recStatusRef.current = 'recording';
@@ -775,6 +779,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     setAccumulatedMs(0);
     hourlyPromptHourRef.current = 0;
     highSpeedStartRef.current = null;
+    opRejectPointsRef.current = false;
     simStepRef.current = 0;
     setShowHourlyPrompt(false);
 

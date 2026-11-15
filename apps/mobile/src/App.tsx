@@ -466,6 +466,7 @@ export const App: React.FC = () => {
 
   const drainingRef = useRef<Promise<void> | null>(null);
   const pausingRef = useRef<boolean>(false);
+  const rejectRef = useRef<boolean>(false);
 
   const stopWebAndFallbackWatchers = () => {
     if (watchIdRef.current !== null) {
@@ -571,7 +572,7 @@ export const App: React.FC = () => {
   // Procesa un lote de puntos GPS de forma atómica sobre sessionRef.current (sin pisar estado en lotes)
   const ingestPoints = async (pts: RawGpsPoint[], newNativeSeq?: number) => {
     let cur = sessionRef.current;
-    if (!cur || cur.status !== 'recording' || pausingRef.current) return;
+    if (!cur || cur.status !== 'recording' || rejectRef.current) return;
 
     let hs = highSpeedStartRef.current;
     let pauseMsg: string | undefined;
@@ -596,8 +597,8 @@ export const App: React.FC = () => {
     await saveActiveRecordingSession(cur);
 
     if (pauseMsg) {
-      // No esperar acá: ingestPoints corre dentro del cerrojo drainingRef
-      // y pauseRecording() vuelve a solicitar drainNativeLocationBuffer().
+      // Bloquear nuevos puntos solo en auto-pausa y no esperar acá dentro del cerrojo drainingRef
+      rejectRef.current = true;
       void pauseRecording().then(() => setGpsError(pauseMsg));
     }
   };
@@ -833,6 +834,7 @@ export const App: React.FC = () => {
     simStepRef.current = 0;
     hourlyPromptDoneForHourRef.current = 0;
     highSpeedStartRef.current = null;
+    rejectRef.current = false;
     setShowHourlyPrompt(false);
     const newSession: ActiveRecordingSession = {
       id: 'current',
@@ -889,6 +891,7 @@ export const App: React.FC = () => {
   const resumeRecording = async () => {
     const current = sessionRef.current;
     if (!current || current.status !== 'paused') return;
+    rejectRef.current = false;
     const resumed: ActiveRecordingSession = {
       ...current,
       status: 'recording',
@@ -1496,7 +1499,7 @@ export const App: React.FC = () => {
                 <strong>1. Ubicación Precisa activada:</strong> Cuando el teléfono te pida permiso de ubicación, elegí <em>"Mientras la app está en uso"</em> y verificá que esté marcada la opción <strong>"Ubicación precisa"</strong>.
               </li>
               <li>
-                <strong>2. Notificaciones permitidas:</strong> Permití las notificaciones para ver el aviso fijo de <em>"Grabando camino rural"</em> en la barra superior y recibir alertas si se pierde la señal satelital.
+                <strong>2. Notificaciones permitidas:</strong> Permití las notificaciones para ver el aviso fijo de <em>"Caminos Tejedor: grabacion activa"</em> en la barra superior y recibir alertas si se pierde la señal satelital.
               </li>
               <li>
                 <strong>3. Uso en segundo plano / Batería:</strong> Si tu celular tiene ahorro de batería estricto, dejá esta aplicación en <em>"Sin restricciones"</em> para que Android no detenga el GPS en recorridos largos.

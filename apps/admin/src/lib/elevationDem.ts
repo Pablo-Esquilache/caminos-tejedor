@@ -46,12 +46,15 @@ async function fetchJsonWithRetryAndTimeout<T>(
         continue;
       }
       if (!res.ok) {
-        throw new Error(`Error consultando MDE (${res.status})`);
+        const httpErr = new Error(`Error consultando MDE (${res.status})`) as Error & { noRetry?: boolean };
+        httpErr.noRetry = res.status >= 400 && res.status < 500;
+        throw httpErr;
       }
       const data = (await res.json()) as T;
       return data;
-    } catch (err) {
+    } catch (err: any) {
       lastErr = err;
+      if (err?.noRetry) break;
       if (attempt < maxAttempts) {
         const waitMs = 700 * Math.pow(2, attempt - 1);
         await new Promise((r) => setTimeout(r, waitMs));
