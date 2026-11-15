@@ -16,6 +16,14 @@ import { supabase } from '../lib/supabase';
 import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
 import { syncPendingRoadElevations, type LowZoneMapItem } from '../lib/elevationDem';
+import {
+  WATER_OVERLAY_PRODUCTS,
+  WATER_OVERLAY_SOURCE_ID,
+  getUtcDateString,
+  probeAvailableDatesForTejedor,
+  syncWaterOverlayOnMap,
+  type WaterOverlayProduct,
+} from '../lib/waterOverlay';
 
 interface MapTripFeature {
   id: string;
@@ -80,6 +88,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapLoadedRef = useRef<boolean>(false);
   const [mapStyle, setMapStyle] = useState<'hybrid' | 'streets'>('hybrid');
   const [showConsolidatedRoads, setShowConsolidatedRoads] = useState(true);
   const [showClaimsLayer, setShowClaimsLayer] = useState(true);
@@ -99,6 +108,17 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [selectedLowZone, setSelectedLowZone] = useState<LowZoneMapItem | null>(null);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
+  // Capa de Agua detectada por satélite (NASA GIBS / OPERA DSWx 30m — indicio solo Admin)
+  const [showWaterOverlay, setShowWaterOverlay] = useState(false);
+  const [waterProduct, setWaterProduct] = useState<WaterOverlayProduct>('opera_s1');
+  const [waterDateIso, setWaterDateIso] = useState<string>(() => getUtcDateString(1));
+  const [waterAvailableDates, setWaterAvailableDates] = useState<string[]>([]);
+  const [probingWaterDates, setProbingWaterDates] = useState(false);
+  const [waterOpacity, setWaterOpacity] = useState<number>(0.55);
+
+  const isMapReady = (map: maplibregl.Map | null): map is maplibregl.Map =>
+    Boolean(map && mapLoadedRef.current && map.getStyle());
+
   const layersStateRef = useRef({
     showConsolidatedRoads,
     showClaimsLayer,
@@ -106,6 +126,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     showApproved,
     showPending,
     showLowZonesLayer,
+    showWaterOverlay,
+    waterProduct,
+    waterDateIso,
+    waterOpacity,
   });
   layersStateRef.current = {
     showConsolidatedRoads,
@@ -114,6 +138,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     showApproved,
     showPending,
     showLowZonesLayer,
+    showWaterOverlay,
+    waterProduct,
+    waterDateIso,
+    waterOpacity,
   };
 
   const viewportCacheRef = useRef<{
@@ -347,7 +375,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   };
 
   const updateLowZonesLayer = (map: maplibregl.Map, items: LowZoneMapItem[]) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const fc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -422,7 +450,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       viewportCacheRef.current.lowZones = null;
       viewportCacheRef.current.roads = null;
       const map = mapRef.current;
-      if (map && map.isStyleLoaded()) {
+      if (isMapReady(map)) {
         await fetchViewportData(map);
       }
     } catch (err) {
@@ -436,7 +464,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     map: maplibregl.Map,
     interventions: MapInterventionFeature[]
   ) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const fc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -549,7 +577,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     map: maplibregl.Map,
     segs: MapRoadSegmentFeature[]
   ) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const fc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -726,7 +754,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     map: maplibregl.Map,
     claims: MapClaimPointFeature[]
   ) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const fc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -901,7 +929,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   };
 
   const updateGeneralLayers = (map: maplibregl.Map, items: MapTripFeature[]) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const fc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -1000,7 +1028,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     coords: Array<[number, number]>,
     pointCoords: [number, number] | null
   ) => {
-    if (!map.isStyleLoaded()) return;
+    if (!isMapReady(map)) return;
 
     const lineFc: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
@@ -1096,6 +1124,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   useEffect(() => {
     if (!containerRef.current) return;
 
+    mapLoadedRef.current = false;
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: getMapStyle(mapStyle),
@@ -1106,7 +1135,24 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+    // Ignorar errores de tiles externos de NASA GIBS para no ensuciar consola ni disparar alertas
+    map.on('error', (ev: any) => {
+      if (ev?.sourceId === WATER_OVERLAY_SOURCE_ID) {
+        return;
+      }
+    });
+
     map.on('load', () => {
+      mapLoadedRef.current = true;
+      const cur = layersStateRef.current;
+      if (mode === 'general' && cur.showWaterOverlay) {
+        syncWaterOverlayOnMap(map, {
+          enabled: true,
+          product: cur.waterProduct,
+          dateIso: cur.waterDateIso,
+          opacity: cur.waterOpacity,
+        });
+      }
       if (mode === 'general') {
         fetchViewportData(map);
       } else {
@@ -1123,15 +1169,55 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     mapRef.current = map;
 
     return () => {
+      mapLoadedRef.current = false;
       viewportCacheRef.current = { key: '', roads: null, claims: null, interventions: null, trips: null, lowZones: null };
       map.remove();
       mapRef.current = null;
     };
   }, [mapStyle, mode]);
 
+  // Sondear fechas recientes con datos observados sobre los 4 cuadrantes z=10 del Partido al activar el switch
+  useEffect(() => {
+    if (!showWaterOverlay || mode !== 'general') {
+      setProbingWaterDates(false);
+      return;
+    }
+    const controller = new AbortController();
+    setProbingWaterDates(true);
+    probeAvailableDatesForTejedor(waterProduct, 15, controller.signal)
+      .then((dates) => {
+        if (controller.signal.aborted) return;
+        setWaterAvailableDates(dates);
+        if (dates.length > 0 && !dates.includes(waterDateIso)) {
+          setWaterDateIso(dates[0]);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setProbingWaterDates(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [showWaterOverlay, waterProduct, mode]);
+
+  // Sincronizar la capa raster de agua cada vez que cambie el switch, producto, fecha u opacidad
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!isMapReady(map) || mode !== 'general') return;
+    syncWaterOverlayOnMap(map, {
+      enabled: showWaterOverlay,
+      product: waterProduct,
+      dateIso: waterDateIso,
+      opacity: waterOpacity,
+    });
+  }, [showWaterOverlay, waterProduct, waterDateIso, waterOpacity, mode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!isMapReady(map)) return;
     if (mode === 'general') {
       fetchViewportData(map);
     } else {
@@ -1257,6 +1343,204 @@ export const AdminMap: React.FC<AdminMapProps> = ({
           {demError && (
             <div style={{ fontSize: '0.75rem', color: '#C64D43', marginTop: 2 }}>{demError}</div>
           )}
+
+          {/* Capa satelital de Agua detectada por satélite (NASA GIBS / OPERA DSWx 30m) */}
+          <label className="layer-check" style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={showWaterOverlay}
+              onChange={(e) => setShowWaterOverlay(e.target.checked)}
+            />
+            <span
+              className="legend-dot"
+              style={{ background: '#1d4ed8', border: '1.5px solid #60a5fa' }}
+            />
+            <span>
+              <strong>Agua detectada por satélite (indicio)</strong>
+            </span>
+          </label>
+
+          {showWaterOverlay && (
+            <div
+              style={{
+                marginTop: 6,
+                marginBottom: 6,
+                padding: '8px 10px',
+                borderRadius: 8,
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                fontSize: '0.74rem',
+                color: '#1e293b',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 3, color: '#0f172a' }}>
+                  Sensor / Producto NASA GIBS (30 m/píxel):
+                </div>
+                <select
+                  value={waterProduct}
+                  onChange={(e) => {
+                    const nextProd = e.target.value as WaterOverlayProduct;
+                    setWaterProduct(nextProd);
+                    setWaterOpacity(WATER_OVERLAY_PRODUCTS[nextProd].defaultOpacity);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '4px 6px',
+                    borderRadius: 6,
+                    border: '1px solid #94a3b8',
+                    fontSize: '0.74rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  {Object.values(WATER_OVERLAY_PRODUCTS).map((cfg) => (
+                    <option key={cfg.id} value={cfg.id}>
+                      {cfg.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                  <span style={{ fontWeight: 700, color: '#0f172a' }}>
+                    Fecha UTC de observación:
+                  </span>
+                  {probingWaterDates && (
+                    <span style={{ fontSize: '0.68rem', color: '#0284c7' }}>
+                      Buscando pasadas...
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    title="Ir a la pasada con datos anterior"
+                    disabled={waterAvailableDates.length === 0}
+                    onClick={() => {
+                      if (waterAvailableDates.length === 0) return;
+                      const idx = waterAvailableDates.indexOf(waterDateIso);
+                      const nextIdx =
+                        idx === -1
+                          ? 0
+                          : Math.min(waterAvailableDates.length - 1, idx + 1);
+                      setWaterDateIso(waterAvailableDates[nextIdx]);
+                    }}
+                    style={{
+                      padding: '3px 7px',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      cursor: waterAvailableDates.length > 0 ? 'pointer' : 'not-allowed',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    ◀ Ant.
+                  </button>
+                  <input
+                    type="date"
+                    value={waterDateIso}
+                    max={getUtcDateString(0)}
+                    onChange={(e) => {
+                      if (e.target.value) setWaterDateIso(e.target.value);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '3px 6px',
+                      borderRadius: 6,
+                      border: '1px solid #94a3b8',
+                      fontSize: '0.74rem',
+                      background: '#ffffff',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    title="Ir a la pasada con datos siguiente (más reciente)"
+                    disabled={waterAvailableDates.length === 0}
+                    onClick={() => {
+                      if (waterAvailableDates.length === 0) return;
+                      const idx = waterAvailableDates.indexOf(waterDateIso);
+                      const prevIdx = idx <= 0 ? 0 : idx - 1;
+                      setWaterDateIso(waterAvailableDates[prevIdx]);
+                    }}
+                    style={{
+                      padding: '3px 7px',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      cursor: waterAvailableDates.length > 0 ? 'pointer' : 'not-allowed',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Sig. ▶
+                  </button>
+                </div>
+                {waterAvailableDates.length > 0 && (
+                  <div style={{ fontSize: '0.69rem', color: '#334155', marginTop: 3 }}>
+                    Última fecha con datos observados (15d):{' '}
+                    <button
+                      type="button"
+                      onClick={() => setWaterDateIso(waterAvailableDates[0])}
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        color: '#0284c7',
+                        fontWeight: 700,
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        padding: 0,
+                        fontSize: '0.69rem',
+                      }}
+                    >
+                      {waterAvailableDates[0]}
+                    </button>{' '}
+                    ({waterAvailableDates.length} fechas con cobertura en 15 días)
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontWeight: 600 }}>Opacidad ({Math.round(waterOpacity * 100)}%):</span>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={0.95}
+                  step={0.05}
+                  value={waterOpacity}
+                  onChange={(e) => setWaterOpacity(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', marginTop: 2 }}>
+                {WATER_OVERLAY_PRODUCTS[waterProduct].legendItems.map((item, idx) => (
+                  <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.69rem' }}>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 2,
+                        background: item.color,
+                        border: item.border ? `1px solid ${item.border}` : 'none',
+                        display: 'inline-block',
+                      }}
+                    />
+                    {item.label}
+                  </span>
+                ))}
+              </div>
+
+              <div style={{ fontSize: '0.68rem', color: '#475569', lineHeight: 1.3 }}>
+                {WATER_OVERLAY_PRODUCTS[waterProduct].description} Indicio orientativo (30 m/px no afirma corte de calzada de 6–10 m).
+              </div>
+            </div>
+          )}
+
           <div className="layer-meta">
             {loadingBbox
               ? 'Consultando área visible...'

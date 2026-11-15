@@ -53,7 +53,10 @@ export function getMapStyle(styleType: 'hybrid' | 'streets'): string | StyleSpec
         type: 'raster',
         tiles: [tileUrl],
         tileSize: 256,
-        attribution: '© OpenStreetMap contributors',
+        attribution:
+          styleType === 'hybrid'
+            ? '© Esri, Maxar, Earthstar Geographics, © OpenStreetMap contributors'
+            : '© OpenStreetMap contributors',
       },
     },
     layers: [
