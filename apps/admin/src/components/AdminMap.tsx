@@ -116,6 +116,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [waterAvailableDates, setWaterAvailableDates] = useState<string[]>([]);
   const [probingWaterDates, setProbingWaterDates] = useState(false);
   const [waterOpacity, setWaterOpacity] = useState<number>(0.55);
+  const [layerPanelCollapsed, setLayerPanelCollapsed] = useState(false);
 
   const isMapReady = (map: maplibregl.Map | null): map is maplibregl.Map =>
     Boolean(map && mapLoadedRef.current && map.getStyle());
@@ -1255,8 +1256,46 @@ export const AdminMap: React.FC<AdminMapProps> = ({
 
       {/* Controles de Capas en Modo Mapa General */}
       {mode === 'general' && (
-        <div className="map-layer-panel">
-          <div className="layer-panel-title">Capas del Partido de Carlos Tejedor</div>
+        <div
+          className="map-layer-panel"
+          style={layerPanelCollapsed ? { padding: '8px 12px', gap: 0 } : undefined}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 10,
+            }}
+          >
+            <div className="layer-panel-title">
+              {layerPanelCollapsed ? 'Capas y Filtros' : 'Capas del Partido de Carlos Tejedor'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setLayerPanelCollapsed((prev) => !prev)}
+              style={{
+                border: '1px solid #cbd5e1',
+                background: layerPanelCollapsed ? '#eff6ff' : '#f1f5f9',
+                color: '#0f172a',
+                borderRadius: 6,
+                padding: '3px 8px',
+                fontSize: '0.73rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {layerPanelCollapsed ? 'Abrir ▼' : 'Ver mapa ▲'}
+            </button>
+          </div>
+          {layerPanelCollapsed && showWaterOverlay && (
+            <div style={{ fontSize: '0.71rem', color: '#1d4ed8', fontWeight: 600, marginTop: 4 }}>
+              Agua: {WATER_OVERLAY_PRODUCTS[waterProduct].shortLabel} • {waterDateIso}
+            </div>
+          )}
+          {!layerPanelCollapsed && (
+            <>
           <label className="layer-check">
             <input
               type="checkbox"
@@ -1561,6 +1600,8 @@ export const AdminMap: React.FC<AdminMapProps> = ({
               ? 'Consultando área visible...'
               : `${visibleRoadsCount} tramo(s) • ${visibleClaimsCount} reclamo(s) • ${visibleCount} recorrido(s)`}
           </div>
+            </>
+          )}
         </div>
       )}
 
