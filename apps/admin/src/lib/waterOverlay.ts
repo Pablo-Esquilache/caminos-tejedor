@@ -185,7 +185,10 @@ export async function probeAvailableDatesForTejedor(
 
   const probeTiles =
     WATER_OVERLAY_PRODUCTS[product].maxZoom < 10
-      ? [{ z: 9, x: 167, y: 309 }]
+      ? [
+          { z: 9, x: 166, y: 309 },
+          { z: 9, x: 167, y: 309 },
+        ]
       : TEJEDOR_Z10_TILES;
 
   for (let i = 0; i < candidateDates.length; i += BATCH_SIZE) {

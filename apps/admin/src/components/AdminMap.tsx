@@ -1406,7 +1406,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             <div style={{ fontSize: '0.75rem', color: '#C64D43', marginTop: 2 }}>{demError}</div>
           )}
 
-          {/* Capa satelital de Agua detectada por satélite (NASA GIBS / OPERA DSWx 30m) */}
+          {/* Capa satelital reciente / contexto de agua (NASA GIBS — solo Admin) */}
           <label className="layer-check" style={{ marginTop: 4 }}>
             <input
               type="checkbox"
@@ -1418,7 +1418,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
               style={{ background: '#1d4ed8', border: '1.5px solid #60a5fa' }}
             />
             <span>
-              <strong>Agua detectada por satélite (indicio)</strong>
+              <strong>
+                {waterProduct === 'opera_s1' || waterProduct === 'opera_hls'
+                  ? 'Agua detectada por satélite (indicio)'
+                  : 'Imagen satelital reciente (contexto de agua)'}
+              </strong>
             </span>
           </label>
 
@@ -1440,7 +1444,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             >
               <div>
                 <div style={{ fontWeight: 700, marginBottom: 3, color: '#0f172a' }}>
-                  Sensor / Producto NASA GIBS (30 m/píxel):
+                  Sensor / Producto NASA GIBS ({WATER_OVERLAY_PRODUCTS[waterProduct].resolution}):
                 </div>
                 <select
                   value={waterProduct}
@@ -1598,7 +1602,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
               </div>
 
               <div style={{ fontSize: '0.68rem', color: '#475569', lineHeight: 1.3 }}>
-                {WATER_OVERLAY_PRODUCTS[waterProduct].description} Indicio orientativo (30 m/px no afirma corte de calzada de 6–10 m).
+                {WATER_OVERLAY_PRODUCTS[waterProduct].description} Indicio orientativo ({WATER_OVERLAY_PRODUCTS[waterProduct].resolution} no afirma corte de calzada de 6–10 m).
               </div>
             </div>
           )}
