@@ -27,28 +27,37 @@ export interface LowZoneMapItem {
   dem_source: string;
 }
 
-async function fetchWithRetryAndTimeout(url: string, timeoutMs = 12000, maxAttempts = 3): Promise<Response> {
+async function fetchJsonWithRetryAndTimeout<T>(
+  url: string,
+  timeoutMs = 12000,
+  maxAttempts = 3
+): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
       if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        clearTimeout(timer);
         const waitMs = 800 * Math.pow(2, attempt - 1);
         await new Promise((r) => setTimeout(r, waitMs));
         lastErr = new Error(`HTTP ${res.status}`);
         continue;
       }
-      return res;
+      if (!res.ok) {
+        throw new Error(`Error consultando MDE (${res.status})`);
+      }
+      const data = (await res.json()) as T;
+      return data;
     } catch (err) {
-      clearTimeout(timer);
       lastErr = err;
       if (attempt < maxAttempts) {
         const waitMs = 700 * Math.pow(2, attempt - 1);
         await new Promise((r) => setTimeout(r, waitMs));
       }
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('Timeout consultando servicio MDE');
@@ -70,11 +79,7 @@ export async function fetchDemElevationsBatch(
     const lats = chunk.map((p) => Number(p.lat).toFixed(6)).join(',');
     const lons = chunk.map((p) => Number(p.lon).toFixed(6)).join(',');
     const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
-    const res = await fetchWithRetryAndTimeout(url, 12000, 3);
-    if (!res.ok) {
-      throw new Error(`Error consultando MDE (${res.status})`);
-    }
-    const json = (await res.json()) as { elevation?: unknown[] };
+    const json = await fetchJsonWithRetryAndTimeout<{ elevation?: unknown[] }>(url, 12000, 3);
     if (!Array.isArray(json.elevation) || json.elevation.length !== chunk.length) {
       throw new Error('Respuesta inesperada del servicio de elevación MDE');
     }

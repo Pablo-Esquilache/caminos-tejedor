@@ -519,8 +519,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     };
   }, []);
 
+  const opDrainingRef = useRef<Promise<void> | null>(null);
+  const opPausingRef = useRef<boolean>(false);
+
   const pushIncomingPoint = (pt: RawGpsPoint, seq?: number) => {
-    if (recStatusRef.current !== 'recording') return;
+    if (recStatusRef.current !== 'recording' || opPausingRef.current) return;
     if (typeof seq === 'number') {
       if (seq <= nativeSeqRef.current) return;
       nativeSeqRef.current = seq;
@@ -529,9 +532,10 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     // Regla unificada: Límite del Partido de Carlos Tejedor (buffer 3 km)
     if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
-      pauseLinearGps();
-      setGpsError(
-        'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Trabajo pausado preventivamente.'
+      void pauseLinearGps().then(() =>
+        setGpsError(
+          'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Trabajo pausado preventivamente.'
+        )
       );
       return;
     }
@@ -542,11 +546,12 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       if (highSpeedStartRef.current === null) {
         highSpeedStartRef.current = pt.timestamp || Date.now();
       } else if ((pt.timestamp || Date.now()) - highSpeedStartRef.current >= 30 * 60 * 1000) {
-        pauseLinearGps();
-        setGpsError(
-          'Se detectó velocidad de ruta sostenida (> 100 km/h por 30 min). Trabajo pausado preventivamente.'
-        );
         highSpeedStartRef.current = null;
+        void pauseLinearGps().then(() =>
+          setGpsError(
+            'Se detectó velocidad de ruta sostenida (> 100 km/h por 30 min). Trabajo pausado preventivamente.'
+          )
+        );
         return;
       }
     } else if (speedKmH != null && speedKmH < 90) {
@@ -574,8 +579,6 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     setDistanceM(distRef.current);
   };
 
-  const opDrainingRef = useRef<Promise<void> | null>(null);
-
   // Drena los puntos del diario nativo GpsJournal con cerrojo en curso (evita lecturas solapadas)
   const drainNativeLocationBuffer = (): Promise<void> => {
     if (opDrainingRef.current) return opDrainingRef.current;
@@ -589,7 +592,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
           nativeSeqRef.current = lastSeq;
         }
         for (const pt of rawPts) {
-          if (recStatusRef.current !== 'recording') break;
+          if (recStatusRef.current !== 'recording' || opPausingRef.current) break;
           pushIncomingPoint(pt);
         }
       } catch (err) {
@@ -722,23 +725,29 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   };
 
   const pauseLinearGps = async () => {
-    await drainNativeLocationBuffer();
-    stopWebAndFallbackGps();
-    if (isNativeGps()) {
-      try {
-        await BackgroundGps.stop();
-      } catch {}
+    if (opPausingRef.current) return;
+    opPausingRef.current = true;
+    try {
       await drainNativeLocationBuffer();
+      stopWebAndFallbackGps();
+      if (isNativeGps()) {
+        try {
+          await BackgroundGps.stop();
+        } catch {}
+        await drainNativeLocationBuffer();
+      }
+      let nextAcc = accumulatedMs;
+      if (lastResumedAt !== null) {
+        nextAcc = accumulatedMs + (Date.now() - lastResumedAt);
+        setAccumulatedMs(nextAcc);
+      }
+      setLastResumedAt(null);
+      setRecStatus('paused');
+      recStatusRef.current = 'paused';
+      persistOperatorSessionMeta(opSessionIdRef.current, activeWork, startedAtIso, nextAcc, null);
+    } finally {
+      opPausingRef.current = false;
     }
-    let nextAcc = accumulatedMs;
-    if (lastResumedAt !== null) {
-      nextAcc = accumulatedMs + (Date.now() - lastResumedAt);
-      setAccumulatedMs(nextAcc);
-    }
-    setLastResumedAt(null);
-    setRecStatus('paused');
-    recStatusRef.current = 'paused';
-    persistOperatorSessionMeta(opSessionIdRef.current, activeWork, startedAtIso, nextAcc, null);
   };
 
   const resumeLinearGps = () => {

@@ -80,6 +80,7 @@ function playAlertTone() {
 
 const PAGE_SIZE = 20;
 const PERMISSION_EXPLAINED_KEY = 'caminos_tejedor_gps_explained_v1';
+const FIRST_RUN_SETUP_KEY = 'caminos_tejedor_first_run_setup_v1';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -107,11 +108,14 @@ export const App: React.FC = () => {
   const [syncingOutbox, setSyncingOutbox] = useState(false);
   const [syncBannerMsg, setSyncBannerMsg] = useState<string | null>(null);
 
-  // Explicación previa de permisos GPS
+  // Explicación previa de permisos GPS y cartel de bienvenida en el primer inicio post-instalación
   const [gpsExplained, setGpsExplained] = useState<boolean>(
     () => localStorage.getItem(PERMISSION_EXPLAINED_KEY) === 'true'
   );
   const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [showFirstRunModal, setShowFirstRunModal] = useState<boolean>(
+    () => localStorage.getItem(FIRST_RUN_SETUP_KEY) !== 'true'
+  );
 
   // Temporizador de seguridad de 1 hora (60 minutos)
   const [showHourlyPrompt, setShowHourlyPrompt] = useState(false);
@@ -461,6 +465,7 @@ export const App: React.FC = () => {
   };
 
   const drainingRef = useRef<Promise<void> | null>(null);
+  const pausingRef = useRef<boolean>(false);
 
   const stopWebAndFallbackWatchers = () => {
     if (watchIdRef.current !== null) {
@@ -566,7 +571,7 @@ export const App: React.FC = () => {
   // Procesa un lote de puntos GPS de forma atómica sobre sessionRef.current (sin pisar estado en lotes)
   const ingestPoints = async (pts: RawGpsPoint[], newNativeSeq?: number) => {
     let cur = sessionRef.current;
-    if (!cur || cur.status !== 'recording') return;
+    if (!cur || cur.status !== 'recording' || pausingRef.current) return;
 
     let hs = highSpeedStartRef.current;
     let pauseMsg: string | undefined;
@@ -591,8 +596,9 @@ export const App: React.FC = () => {
     await saveActiveRecordingSession(cur);
 
     if (pauseMsg) {
-      await pauseRecording();
-      setGpsError(pauseMsg);
+      // No esperar acá: ingestPoints corre dentro del cerrojo drainingRef
+      // y pauseRecording() vuelve a solicitar drainNativeLocationBuffer().
+      void pauseRecording().then(() => setGpsError(pauseMsg));
     }
   };
 
@@ -788,9 +794,39 @@ export const App: React.FC = () => {
 
   const acceptPermissionExplanation = () => {
     localStorage.setItem(PERMISSION_EXPLAINED_KEY, 'true');
+    localStorage.setItem(FIRST_RUN_SETUP_KEY, 'true');
     setGpsExplained(true);
     setShowPermissionModal(false);
+    setShowFirstRunModal(false);
     beginNewRecording();
+  };
+
+  const dismissFirstRunSetup = () => {
+    localStorage.setItem(FIRST_RUN_SETUP_KEY, 'true');
+    setShowFirstRunModal(false);
+  };
+
+  const handleCompleteFirstRunSetup = async () => {
+    localStorage.setItem(FIRST_RUN_SETUP_KEY, 'true');
+    localStorage.setItem(PERMISSION_EXPLAINED_KEY, 'true');
+    setGpsExplained(true);
+    setShowFirstRunModal(false);
+    if (isNativeGps()) {
+      try {
+        const perm = await Geolocation.requestPermissions();
+        if (perm.location !== 'granted') {
+          setGpsError(
+            perm.coarseLocation === 'granted'
+              ? 'Atención: activaste "Ubicación aproximada". Para que el GPS funcione con pantalla bloqueada, entrá a los permisos de la app y activá "Ubicación precisa".'
+              : 'Recordá otorgar el permiso de Ubicación precisa antes de iniciar un recorrido.'
+          );
+        } else {
+          setGpsError(null);
+        }
+      } catch {
+        // Ignorar si el usuario cerró el diálogo del sistema
+      }
+    }
   };
 
   const beginNewRecording = async () => {
@@ -827,22 +863,27 @@ export const App: React.FC = () => {
 
   const pauseRecording = async () => {
     const current = sessionRef.current;
-    if (!current || current.status !== 'recording') return;
-    await drainNativeLocationBuffer();
-    await stopNativeSafely();
-    const latest = sessionRef.current || current;
-    const additionalMs = latest.lastResumedAt
-      ? Date.now() - latest.lastResumedAt
-      : 0;
-    const paused: ActiveRecordingSession = {
-      ...latest,
-      status: 'paused',
-      accumulatedDurationMs: latest.accumulatedDurationMs + additionalMs,
-      lastResumedAt: null,
-    };
-    sessionRef.current = paused;
-    setRecordingSession(paused);
-    await saveActiveRecordingSession(paused);
+    if (!current || current.status !== 'recording' || pausingRef.current) return;
+    pausingRef.current = true;
+    try {
+      await drainNativeLocationBuffer();
+      await stopNativeSafely();
+      const latest = sessionRef.current || current;
+      const additionalMs = latest.lastResumedAt
+        ? Date.now() - latest.lastResumedAt
+        : 0;
+      const paused: ActiveRecordingSession = {
+        ...latest,
+        status: 'paused',
+        accumulatedDurationMs: latest.accumulatedDurationMs + additionalMs,
+        lastResumedAt: null,
+      };
+      sessionRef.current = paused;
+      setRecordingSession(paused);
+      await saveActiveRecordingSession(paused);
+    } finally {
+      pausingRef.current = false;
+    }
   };
 
   const resumeRecording = async () => {
@@ -1344,6 +1385,14 @@ export const App: React.FC = () => {
         <div className="inline-btns">
           <button
             type="button"
+            className="icon-btn"
+            onClick={() => setShowFirstRunModal(true)}
+            title="Guía de permisos y GPS en segundo plano"
+          >
+            <ShieldCheck size={18} />
+          </button>
+          <button
+            type="button"
             className="icon-btn notif-top-btn"
             onClick={() => {
               loadNotifications();
@@ -1428,6 +1477,50 @@ export const App: React.FC = () => {
         <div className="sync-toast">
           <CheckCircle2 size={18} />
           <span>{syncBannerMsg}</span>
+        </div>
+      )}
+
+      {/* Cartel de configuración inicial al abrir la app por primera vez después de instalar */}
+      {showFirstRunModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="modal-icon" style={{ background: '#ecfdf5', color: '#047857' }}>
+              <ShieldCheck size={28} />
+            </div>
+            <h2>Configuración inicial para el campo</h2>
+            <p>
+              Bienvenido a <strong>Caminos Rurales Carlos Tejedor</strong>. Para que el rastreo GPS funcione sin cortarse con la <strong>pantalla bloqueada</strong> o mientras usás otras apps (como WhatsApp), verificá estos 3 puntos:
+            </p>
+            <ul className="permission-list">
+              <li>
+                <strong>1. Ubicación Precisa activada:</strong> Cuando el teléfono te pida permiso de ubicación, elegí <em>"Mientras la app está en uso"</em> y verificá que esté marcada la opción <strong>"Ubicación precisa"</strong>.
+              </li>
+              <li>
+                <strong>2. Notificaciones permitidas:</strong> Permití las notificaciones para ver el aviso fijo de <em>"Grabando camino rural"</em> en la barra superior y recibir alertas si se pierde la señal satelital.
+              </li>
+              <li>
+                <strong>3. Uso en segundo plano / Batería:</strong> Si tu celular tiene ahorro de batería estricto, dejá esta aplicación en <em>"Sin restricciones"</em> para que Android no detenga el GPS en recorridos largos.
+              </li>
+            </ul>
+            <div className="modal-actions" style={{ flexDirection: 'column', gap: 10 }}>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={handleCompleteFirstRunSetup}
+              >
+                Activar permisos ahora y continuar
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={dismissFirstRunSetup}
+              >
+                Entendido, lo haré al grabar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
