@@ -17,6 +17,7 @@ import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
 import { syncPendingRoadElevations, type LowZoneMapItem } from '../lib/elevationDem';
 import {
+  WATER_OVERLAY_LAYER_ID,
   WATER_OVERLAY_PRODUCTS,
   WATER_OVERLAY_SOURCE_ID,
   getUtcDateString,
@@ -1134,11 +1135,12 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
-    // Ignorar errores de tiles externos de NASA GIBS para no ensuciar consola ni disparar alertas
+    // Ignorar errores de tiles externos de NASA GIBS y conservar el log de errores del mapa base
     map.on('error', (ev: any) => {
-      if (ev?.sourceId === WATER_OVERLAY_SOURCE_ID) {
-        return;
+      if (ev?.sourceId !== WATER_OVERLAY_SOURCE_ID) {
+        console.error(ev?.error ?? ev);
       }
     });
 
@@ -1203,7 +1205,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
     };
   }, [showWaterOverlay, waterProduct, mode]);
 
-  // Sincronizar la capa raster de agua cada vez que cambie el switch, producto, fecha u opacidad
+  // Sincronizar la capa raster de agua cuando cambie el switch, producto o fecha (sin recrear al mover opacidad)
   useEffect(() => {
     const map = mapRef.current;
     if (!isMapReady(map) || mode !== 'general') return;
@@ -1211,9 +1213,22 @@ export const AdminMap: React.FC<AdminMapProps> = ({
       enabled: showWaterOverlay,
       product: waterProduct,
       dateIso: waterDateIso,
-      opacity: waterOpacity,
+      opacity: layersStateRef.current.waterOpacity,
     });
-  }, [showWaterOverlay, waterProduct, waterDateIso, waterOpacity, mode]);
+  }, [showWaterOverlay, waterProduct, waterDateIso, mode]);
+
+  // Ajustar opacidad en vivo sin destruir ni volver a descargar los tiles de la capa raster
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!isMapReady(map) || mode !== 'general') return;
+    if (map.getLayer(WATER_OVERLAY_LAYER_ID)) {
+      map.setPaintProperty(
+        WATER_OVERLAY_LAYER_ID,
+        'raster-opacity',
+        Math.max(0.1, Math.min(1, waterOpacity))
+      );
+    }
+  }, [waterOpacity, mode]);
 
   useEffect(() => {
     const map = mapRef.current;
