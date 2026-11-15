@@ -109,13 +109,13 @@ export const AdminMap: React.FC<AdminMapProps> = ({
   const [selectedLowZone, setSelectedLowZone] = useState<LowZoneMapItem | null>(null);
   const [loadingBbox, setLoadingBbox] = useState(false);
 
-  // Capa de Agua detectada por satélite (NASA GIBS / OPERA DSWx 30m — indicio solo Admin)
+  // Capa de Agua detectada por satélite (NASA GIBS — indicio solo Admin)
   const [showWaterOverlay, setShowWaterOverlay] = useState(false);
-  const [waterProduct, setWaterProduct] = useState<WaterOverlayProduct>('opera_s1');
+  const [waterProduct, setWaterProduct] = useState<WaterOverlayProduct>('modis_721');
   const [waterDateIso, setWaterDateIso] = useState<string>(() => getUtcDateString(1));
   const [waterAvailableDates, setWaterAvailableDates] = useState<string[]>([]);
   const [probingWaterDates, setProbingWaterDates] = useState(false);
-  const [waterOpacity, setWaterOpacity] = useState<number>(0.55);
+  const [waterOpacity, setWaterOpacity] = useState<number>(0.75);
   const [layerPanelCollapsed, setLayerPanelCollapsed] = useState(false);
 
   const isMapReady = (map: maplibregl.Map | null): map is maplibregl.Map =>
@@ -1262,6 +1262,14 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         >
           <div
             style={{
+              position: 'sticky',
+              top: -12,
+              background: 'rgba(255, 255, 255, 0.98)',
+              paddingTop: 4,
+              paddingBottom: 6,
+              marginBottom: layerPanelCollapsed ? 0 : 2,
+              borderBottom: layerPanelCollapsed ? 'none' : '1px solid #e2e8f0',
+              zIndex: 2,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',

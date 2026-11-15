@@ -1,6 +1,6 @@
 import type maplibregl from 'maplibre-gl';
 
-export type WaterOverlayProduct = 'opera_s1' | 'opera_hls' | 'hls_truecolor';
+export type WaterOverlayProduct = 'modis_721' | 'hls_truecolor' | 'opera_s1' | 'opera_hls';
 
 export interface WaterOverlayProductConfig {
   id: WaterOverlayProduct;
@@ -10,7 +10,7 @@ export interface WaterOverlayProductConfig {
   resolution: string;
   tileMatrixSet: string;
   maxZoom: number;
-  formatExt: 'png';
+  formatExt: 'png' | 'jpg';
   defaultOpacity: number;
   description: string;
   legendItems: Array<{ color: string; border?: string; label: string }>;
@@ -19,25 +19,61 @@ export interface WaterOverlayProductConfig {
 export const WATER_OVERLAY_SOURCE_ID = 'nasa-gibs-water-source';
 export const WATER_OVERLAY_LAYER_ID = 'nasa-gibs-water-layer';
 export const WATER_OVERLAY_ATTRIBUTION =
-  'NASA GIBS / OPERA DSWx (JPL) · contiene datos modificados de Copernicus Sentinel';
+  'NASA GIBS / OPERA DSWx (JPL) · MODIS · contiene datos modificados de Copernicus Sentinel';
 
 export const WATER_OVERLAY_PRODUCTS: Record<WaterOverlayProduct, WaterOverlayProductConfig> = {
+  modis_721: {
+    id: 'modis_721',
+    gibsLayerId: 'MODIS_Terra_CorrectedReflectance_Bands721',
+    label: 'MODIS Infrarrojo 7-2-1 (Diario · sin franjas ni cortes)',
+    shortLabel: 'MODIS 7-2-1 (Diario)',
+    resolution: '250 m/píxel',
+    tileMatrixSet: 'GoogleMapsCompatible_Level9',
+    maxZoom: 9,
+    formatExt: 'jpg',
+    defaultOpacity: 0.75,
+    description:
+      'Imagen diaria continua NASA MODIS (bandas 7-2-1). Resalta espejos de agua y suelos muy anegados en azul oscuro/negro y vegetación en verde brillante, sin rectángulos blancos.',
+    legendItems: [
+      { color: '#0f172a', label: 'Agua / lagunas / zonas anegadas' },
+      { color: '#22c55e', label: 'Vegetación / cultivos' },
+      { color: '#d97706', label: 'Suelo desnudo / rastrojo' },
+      { color: '#38bdf8', label: 'Nubes (celeste/turquesa)' },
+    ],
+  },
+  hls_truecolor: {
+    id: 'hls_truecolor',
+    gibsLayerId: 'HLS_S30_Nadir_BRDF_Adjusted_Reflectance',
+    label: 'Foto Satelital Reciente Color Real (HLS Sentinel-2 · 30m)',
+    shortLabel: 'Color Real S2 (30m)',
+    resolution: '30 m/píxel',
+    tileMatrixSet: 'GoogleMapsCompatible_Level12',
+    maxZoom: 12,
+    formatExt: 'png',
+    defaultOpacity: 0.85,
+    description:
+      'Reflectancia corregida en color real (Sentinel-2 armonizado). Permite verificar visualmente nubes y lagunas sin velo blanco.',
+    legendItems: [
+      { color: '#1e3a8a', label: 'Agua / lagunas (azul oscuro/negro)' },
+      { color: '#f8fafc', border: '#94a3b8', label: 'Nubes (blanco brillante)' },
+    ],
+  },
   opera_s1: {
     id: 'opera_s1',
     gibsLayerId: 'OPERA_L3_Dynamic_Surface_Water_Extent-Sentinel-1',
-    label: 'Radar Sentinel-1 (OPERA DSWx-S1 · 30m · atraviesa nubes)',
+    label: 'Radar Sentinel-1 (OPERA DSWx-S1 · 30m · franjas)',
     shortLabel: 'Radar Sentinel-1 (30m)',
     resolution: '30 m/píxel',
     tileMatrixSet: 'GoogleMapsCompatible_Level12',
     maxZoom: 12,
     formatExt: 'png',
-    defaultOpacity: 0.55,
+    defaultOpacity: 0.45,
     description:
-      'Compuesto diario UTC de radar SAR (OPERA DSWx-S1). Detecta agua aún con cielo nublado. Limitación: viento fuerte o vegetación muy densa pueden atenuar la señal.',
+      'Compuesto diario UTC de radar SAR (OPERA DSWx-S1). Nota: NASA GIBS pinta la tierra seca de blanco opaco y puede tener rayado de franja o demoras en zoom alto.',
     legendItems: [
       { color: '#0000ff', label: 'Agua abierta' },
       { color: '#00ff00', border: '#15803d', label: 'Vegetación inundada' },
-      { color: '#ffffff', border: '#94a3b8', label: 'Suelo sin agua (observado)' },
+      { color: '#ffffff', border: '#94a3b8', label: 'Suelo sin agua (blanco opaco)' },
       { color: '#c8c8c8', border: '#64748b', label: 'Máscara HAND / sombra radar' },
     ],
   },
@@ -50,31 +86,14 @@ export const WATER_OVERLAY_PRODUCTS: Record<WaterOverlayProduct, WaterOverlayPro
     tileMatrixSet: 'GoogleMapsCompatible_Level12',
     maxZoom: 12,
     formatExt: 'png',
-    defaultOpacity: 0.55,
+    defaultOpacity: 0.45,
     description:
-      'Clasificación óptica de agua superficial (OPERA DSWx-HLS). Separa agua abierta, agua parcial y nubes (gris).',
+      'Clasificación óptica de agua superficial (OPERA DSWx-HLS). Pinta suelo seco en blanco opaco y nubes en gris.',
     legendItems: [
       { color: '#0000ff', label: 'Agua abierta' },
       { color: '#b4d5f4', border: '#0284c7', label: 'Agua superficial parcial' },
-      { color: '#ffffff', border: '#94a3b8', label: 'Suelo sin agua (observado)' },
+      { color: '#ffffff', border: '#94a3b8', label: 'Suelo sin agua (blanco opaco)' },
       { color: '#afafaf', border: '#475569', label: 'Nube (sin dato óptico)' },
-    ],
-  },
-  hls_truecolor: {
-    id: 'hls_truecolor',
-    gibsLayerId: 'HLS_S30_Nadir_BRDF_Adjusted_Reflectance',
-    label: 'Foto Satelital Reciente Color Real (HLS Sentinel-2 · 30m)',
-    shortLabel: 'Color Real S2 (30m)',
-    resolution: '30 m/píxel',
-    tileMatrixSet: 'GoogleMapsCompatible_Level12',
-    maxZoom: 12,
-    formatExt: 'png',
-    defaultOpacity: 0.8,
-    description:
-      'Reflectancia corregida en color real (Sentinel-2 armonizado). Permite verificar visualmente nubes y lagunas.',
-    legendItems: [
-      { color: '#1e3a8a', label: 'Agua / lagunas (azul oscuro/negro)' },
-      { color: '#f8fafc', border: '#94a3b8', label: 'Nubes (blanco brillante)' },
     ],
   },
 };
@@ -164,6 +183,11 @@ export async function probeAvailableDatesForTejedor(
   const datesWithPass: string[] = [];
   const BATCH_SIZE = 5;
 
+  const probeTiles =
+    WATER_OVERLAY_PRODUCTS[product].maxZoom < 10
+      ? [{ z: 9, x: 167, y: 309 }]
+      : TEJEDOR_Z10_TILES;
+
   for (let i = 0; i < candidateDates.length; i += BATCH_SIZE) {
     if (signal?.aborted) break;
     const batch = candidateDates.slice(i, i + BATCH_SIZE);
@@ -171,9 +195,8 @@ export async function probeAvailableDatesForTejedor(
       batch.map(async (dateIso) => {
         if (signal?.aborted) return null;
         try {
-          // Probar primero los 2 tiles centrales del partido y luego los 2 restantes si hiciera falta
           const tileChecks = await Promise.all(
-            TEJEDOR_Z10_TILES.map(async (tile) => {
+            probeTiles.map(async (tile) => {
               const res = await fetch(buildProbeTileUrl(product, dateIso, tile), { signal });
               if (!res.ok) return 0;
               const buf = await res.arrayBuffer();
