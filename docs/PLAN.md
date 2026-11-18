@@ -90,3 +90,10 @@ Una única aplicación instalable en teléfonos móviles que atiende a todos los
 * **Planificador y Realtime:** Satélite Mapbox en el planificador de intervenciones, botón de creación junto a actualizar y suscripción en tiempo real en la bandeja de intervenciones.
 * **Compresión de Fotos Anti-OOM:** Lectura de encabezado de 128 KB para redimensionado directo sin decodificar fotos de 48–108 MP en RAM (PWA y APK), tanto en *Reclamos* como en *Operarios*.
 * **Rendimiento y Vistas por Rol:** Caché por viewport y carga paralela en filtros de `AdminMap.tsx`; etiqueta de rol **Operario** en *Usuarios*; mapa móvil (vecinos y operarios) enfocado en la **Red Consolidada** y barra inferior del operario centrada en 3 columnas iguales.
+
+---
+
+### Actualización de Cierre Técnico (14/11 – 15/11/2026 — `commit 23f9e59`)
+* **Migraciones `018` a `021` aplicadas y verificadas:** Endurecimiento completo de privilegios (`REVOKE`/`GRANT` sobre whitelist de 51 RPCs), algoritmo de tramo trabajado por tramos de 20 m (`extract_worked_tramo_utm`), RLS por intervención (`operator_has_access_to_intervention`), snapshot de métricas lineales en `audit_log` y soporte MDE hasta 250 muestras con verificación de hash (`p_expected_geom_hash`).
+* **Hardening GPS Nativo Android (`apps/mobile`):** Servicio en primer plano `LocationService` solo `GPS_PROVIDER` + diario persistente `GpsJournal` + `POST_NOTIFICATIONS` + exigencia estricta de `FINE_LOCATION` + cartel inicial post-instalación + cerrojos separados (`drainingRef`, `pausingRef`, `rejectRef`) sin deadlocks ni pérdida de puntos al pausar/finalizar.
+* **Capa Satelital NASA GIBS en Admin (`apps/admin`):** Superposición opcional en `AdminMap.tsx` (MODIS 7-2-1 diario, HLS Color Real S2 y OPERA DSWx-S1/HLS) con panel replegable (`Ver mapa ▲`), opacidad en vivo y atribución visible.

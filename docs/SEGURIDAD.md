@@ -41,3 +41,18 @@
 | `notifications` | Bloqueado | Lee sus propios avisos y los marca como leídos | Lee e inserta avisos |
 | `audit_log` | Bloqueado | Bloqueado | Exclusivo administradores |
 | `settings` | Bloqueado | Bloqueado | Exclusivo administradores |
+
+---
+
+## 3. Endurecimiento Adicional (Migraciones 020–021 y App Móvil)
+1. **Privilegios por defecto y Whitelist de RPCs (Migración 020 y 021):**
+   - `ALTER DEFAULT PRIVILEGES` revoca `EXECUTE` público sobre nuevas funciones.
+   - `REVOKE ALL` sobre funciones de `public` (excluyendo triggers y extensiones) y `GRANT EXECUTE` explícito únicamente a la lista blanca de **51 RPCs** consumidas por los clientes autenticados.
+   - `admin_recalculate_intervention_metrics` y `unconsolidate_trip` aplican guarda estricta `public.is_admin()`.
+2. **RLS por Intervención y Storage de Operarios:**
+   - `operator_has_access_to_intervention` restringe lectura/escritura en intervenciones, sesiones, fotos, historial y rutas de `storage.objects` (`{userId}/interventions/...`) únicamente al operario asignado o a administradores.
+3. **Concurrencia y Validación en MDE (`admin_save_segment_elevation`):**
+   - Exige `p_expected_geom_hash` para rechazar perfiles calculados sobre una geometría desactualizada y valida longitud del payload y rango físico de cotas (`-50` a `500 m`).
+4. **Permisos de Ubicación en Android (`App.tsx`, `OperatorWorkspace.tsx`, `MainActivity.java`):**
+   - La grabación nativa rechaza `coarseLocation`-only y exige `location === 'granted'` (Ubicación precisa), además de solicitar `POST_NOTIFICATIONS` en Android 13+.
+   - `AndroidManifest.xml` mantiene `allowBackup="false"` y no solicita `ACCESS_BACKGROUND_LOCATION`, operando mediante Foreground Service (`foregroundServiceType="location"`).

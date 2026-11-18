@@ -27,6 +27,27 @@ El comando `npm run db:test` ejecuta contra Supabase PostgreSQL (dentro de trans
    - Verifica la asociación espacial PostGIS (`ST_DWithin` en `EPSG:32720`) entre reclamos y caminos consolidados cercanos.
 5. **`supabase/tests/performance_explain_test.sql` (Fase 7)**:
    - Verifica la presencia de los 4 índices espaciales `GIST` y mide con `EXPLAIN (ANALYZE, FORMAT JSON)` que las consultas espaciales por ventana visible (`Bounding Box`) respondan en pocos milisegundos.
+6. **`supabase/tests/operator_interventions_test.sql` (Fases 9–14)**:
+   - Verifica el módulo de operarios, sesiones de trabajo, cálculo neto de tramos trabajados en `EPSG:32720` (ida/vuelta, esquinas 90° y multijornada) y permisos por rol.
+
+---
+
+## 1.B. Verificaciones en Node y Checklist de Pruebas de Campo
+
+* **Simulaciones verificadas en Node:**
+  * **Detector MDE cóncavo bilateral (`elevationDem.ts`):** 6 perfiles sintéticos de 3 km (`0%` falsos positivos en 3 pendientes suaves y 2 planos con ruido; `9%` / 3 de 34 muestras en depresión real de 1 m).
+  * **Flujo de drenaje y pausa (`App.tsx` y `OperatorWorkspace.tsx`):** Pausa manual y Finalizar con 5 puntos pendientes incorporan `5/5` puntos (`cursor=5/5`); auto-pausa con punto #3 fuera del partido corta en el #3 y transiciona a `paused` en `< 80 ms` sin deadlock.
+* **Pruebas pendientes en teléfono real (cierre de auditoría móvil):**
+  1. Grabar 30 min con pantalla bloqueada en dos marcas distintas.
+  2. Repetir con ahorro de batería activado.
+  3. Matar la app desde recientes y reabrir (recuperación desde `GpsJournal`).
+  4. Elegir "Ubicación aproximada" (debe mostrar aviso y bloquear inicio).
+  5. Pausar y finalizar justo al desbloquear (verificar puntos del final).
+  6. Cortar GPS a mitad de recorrido.
+  7. Confirmar ausencia del "abanico" de líneas hacia antenas del pueblo.
+  8. Sacar foto vertical y horizontal y validar orientación correcta.
+* **Pruebas visuales en Admin (capa satelital NASA GIBS):**
+  * Comparar contra un reclamo con agua en su fecha, una fecha seca y un día nublado en modo óptico.
 
 ---
 
