@@ -307,3 +307,5 @@ export interface NearbyClaimOption {
 
 // Delimitación geográfica oficial y validación espacial del Partido de Carlos Tejedor
 export * from './boundary';
+// Límites de las 5 plantas urbanas del Partido (IGN WFS)
+export * from './urbanBoundary';

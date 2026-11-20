@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   isPointInsideCarlosTejedor,
+  isPointInsideUrbanArea,
   TRIP_STATUS_USER_LABELS,
   type AppUserRole,
   type RawGpsPoint,
@@ -56,7 +57,7 @@ import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSec
 import { NotificationsView } from './components/NotificationsView';
 import { OperatorWorkspace } from './components/OperatorWorkspace';
 import { BackgroundGps, isNativeGps, toRawPoint, drainNative } from './lib/nativeGps';
-import { reduceIncomingBatch } from './lib/recordingReducer';
+import { reduceIncomingBatch, trimUrbanTail } from './lib/recordingReducer';
 
 function playAlertTone() {
   try {
@@ -131,6 +132,7 @@ export const App: React.FC = () => {
   const [recoveredNotice, setRecoveredNotice] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [lastAccuracy, setLastAccuracy] = useState<number | null>(null);
+  const [lastFixUrban, setLastFixUrban] = useState<boolean>(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [roadNameInput, setRoadNameInput] = useState('');
   const [submittingTrip, setSubmittingTrip] = useState(false);
@@ -269,6 +271,8 @@ export const App: React.FC = () => {
         } catch {}
       }
 
+      // Caso borde documentado: si al reabrir tras cierre la sesión sigue con 0 puntos
+      // (ej. el teléfono se reinició antes de salir de zona urbana), no se restaura y el vecino inicia de nuevo.
       if (baseSession.points.length > 0) {
         // Si estaba grabando cuando se cerró, lo dejamos en pausa para que el usuario decida reanudar o finalizar
         const recovered: ActiveRecordingSession =
@@ -474,11 +478,14 @@ export const App: React.FC = () => {
     if (!cur || cur.status !== 'recording' || rejectRef.current) return;
 
     if (pts.length > 0) {
-      setLastAccuracy(Math.round(pts[pts.length - 1].accuracy));
+      const lastPt = pts[pts.length - 1];
+      setLastAccuracy(Math.round(lastPt.accuracy));
+      setLastFixUrban(!useSimulator && isPointInsideUrbanArea(lastPt.lat, lastPt.lon));
     }
 
     const reduced = reduceIncomingBatch(cur, pts, {
       initialHighSpeedStartedAt: highSpeedStartRef.current,
+      isSimulator: useSimulator,
     });
     cur = reduced.session;
     highSpeedStartRef.current = reduced.nextHighSpeedStartedAt;
@@ -731,6 +738,7 @@ export const App: React.FC = () => {
     hourlyPromptDoneForHourRef.current = 0;
     highSpeedStartRef.current = null;
     rejectRef.current = false;
+    setLastFixUrban(false);
     setShowHourlyPrompt(false);
     const newSession: ActiveRecordingSession = {
       id: 'current',
@@ -811,25 +819,17 @@ export const App: React.FC = () => {
         ? Date.now() - latest.lastResumedAt
         : 0;
 
-    // Limpieza geométrica de lazos, rebotes y micro-ruido de esquinas antes de confirmar
+    // Limpieza geométrica de lazos, rebotes y micro-ruido de esquinas + recorte de cola urbana antes de confirmar
     const cleaned = cleanTrackLoopsAndJitter(latest.points);
-    let cleanedDistance = 0;
-    for (let i = 1; i < cleaned.length; i++) {
-      cleanedDistance += calculateDistanceMeters(
-        cleaned[i - 1].lat,
-        cleaned[i - 1].lon,
-        cleaned[i].lat,
-        cleaned[i].lon
-      );
-    }
+    const trimmed = trimUrbanTail(cleaned, useSimulator);
 
     const confirming: ActiveRecordingSession = {
       ...latest,
       status: 'confirming',
       accumulatedDurationMs: latest.accumulatedDurationMs + additionalMs,
       lastResumedAt: null,
-      points: cleaned,
-      distanceMeters: cleanedDistance > 0 ? cleanedDistance : latest.distanceMeters,
+      points: trimmed.points,
+      distanceMeters: trimmed.distanceMeters,
     };
     sessionRef.current = confirming;
     setRecordingSession(confirming);
@@ -846,6 +846,7 @@ export const App: React.FC = () => {
     sessionRef.current = null;
     setRecordingSession(null);
     setRecoveredNotice(false);
+    setLastFixUrban(false);
     setGpsError(null);
     setShowHourlyPrompt(false);
     hourlyPromptDoneForHourRef.current = 0;
@@ -856,7 +857,11 @@ export const App: React.FC = () => {
     e.preventDefault();
     if (!recordingSession) return;
     if (recordingSession.points.length < 2) {
-      setGpsError('Necesitás al menos 2 puntos GPS grabados para guardar el camino.');
+      setGpsError(
+        lastFixUrban
+          ? 'Todo el recorrido fue dentro de zona urbana, no hay camino rural para guardar.'
+          : 'Necesitás al menos 2 puntos GPS grabados para guardar el camino.'
+      );
       return;
     }
 
@@ -1546,6 +1551,9 @@ export const App: React.FC = () => {
                   <Play size={22} fill="currentColor" />
                   Iniciar grabación de recorrido
                 </button>
+                <p style={{ fontSize: '0.72rem', color: '#64748b', textAlign: 'center', marginTop: 8, marginBottom: 0 }}>
+                  Límites de plantas urbanas: Instituto Geográfico Nacional (IGN).
+                </p>
               </div>
             )}
 
@@ -1559,13 +1567,32 @@ export const App: React.FC = () => {
                     }`}
                   >
                     {recordingSession.status === 'recording'
-                      ? '● GRABANDO CAMINO'
+                      ? recordingSession.points.length === 0 && lastFixUrban
+                        ? '● EN ESPERA (saliendo de zona urbana...)'
+                        : '● GRABANDO CAMINO'
                       : '❚❚ EN PAUSA (no suma distancia ni tiempo)'}
                   </span>
                   {lastAccuracy !== null && (
                     <span className="accuracy-chip">Precisión GPS: ±{lastAccuracy} m</span>
                   )}
                 </div>
+
+                {recordingSession.points.length > 0 &&
+                  !useSimulator &&
+                  isPointInsideUrbanArea(
+                    recordingSession.points[recordingSession.points.length - 1].lat,
+                    recordingSession.points[recordingSession.points.length - 1].lon
+                  ) && (
+                    <div
+                      className="alert-box warning"
+                      style={{ marginTop: 8, marginBottom: 4, fontSize: '0.84rem' }}
+                    >
+                      <AlertTriangle size={16} />
+                      <span>
+                        Estás en zona urbana. Si finalizás acá, estas cuadras finales no se guardan.
+                      </span>
+                    </div>
+                  )}
 
                 <div className="metrics-grid">
                   <div className="metric-box">

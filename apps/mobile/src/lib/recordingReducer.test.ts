@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { RawGpsPoint } from '@shared';
+import {
+  isPointInMultiPolygon,
+  isPointInsideUrbanArea,
+  type RawGpsPoint,
+} from '@shared';
 import { DEFAULT_MAX_GPS_ACCURACY_M } from './geo';
 import type { ActiveRecordingSession } from './localDb';
-import { reduceIncomingBatch, reduceIncomingPoint } from './recordingReducer';
+import { reduceIncomingBatch, reduceIncomingPoint, trimUrbanTail } from './recordingReducer';
 import { analyzeSegmentElevation } from '../../../admin/src/lib/elevationDem';
 
 function makeSession(overrides: Partial<ActiveRecordingSession> = {}): ActiveRecordingSession {
@@ -120,5 +124,127 @@ describe('Fase 1: Detector cóncavo bilateral MDE 90m (6 perfiles sintéticos de
     const basinRes = analyzeSegmentElevation(samples, realBasin);
     expect(basinRes.hasLowZone).toBe(true);
     expect(basinRes.profilePoints.filter((p) => p.is_low_zone).length).toBe(3);
+  });
+});
+
+describe('Fase 2: Geocerca de Ejido Urbano (5 localidades IGN)', () => {
+  const URBAN_CENTERS = [
+    { name: 'Carlos Tejedor', lat: -35.3915, lon: -62.4200 },
+    { name: 'Tres Algarrobos', lat: -35.1956, lon: -62.7744 },
+    { name: 'Timote', lat: -35.3475, lon: -62.2229 },
+    { name: 'Colonia Seré', lat: -35.4365, lon: -62.7279 },
+    { name: 'Curarú', lat: -35.6409, lon: -62.1947 },
+  ];
+
+  it('detecta el centro de las 5 localidades como urbano y un punto rural afuera', () => {
+    for (const c of URBAN_CENTERS) {
+      expect(isPointInsideUrbanArea(c.lat, c.lon), `Centro de ${c.name}`).toBe(true);
+    }
+    // Punto rural abierto entre Carlos Tejedor y Timote
+    expect(isPointInsideUrbanArea(-35.37, -62.32)).toBe(false);
+  });
+
+  it('soporta MultiPolygon con huecos en isPointInMultiPolygon', () => {
+    const polyWithHole = [
+      [
+        [
+          [-62.5, -35.5],
+          [-62.3, -35.5],
+          [-62.3, -35.3],
+          [-62.5, -35.3],
+          [-62.5, -35.5],
+        ],
+        [
+          [-62.42, -35.42],
+          [-62.38, -35.42],
+          [-62.38, -35.38],
+          [-62.42, -35.38],
+          [-62.42, -35.42],
+        ],
+      ],
+    ];
+    expect(isPointInMultiPolygon(-62.45, -35.45, polyWithHole)).toBe(true);
+    expect(isPointInMultiPolygon(-62.40, -35.40, polyWithHole)).toBe(false);
+  });
+
+  it('omite el inicio dentro de cada localidad y arranca solo con el primer punto rural', () => {
+    const t0 = 1795000000000;
+    for (const c of URBAN_CENTERS) {
+      const batch: RawGpsPoint[] = [
+        pt(c.lat, c.lon, t0, 8),
+        pt(c.lat + 0.0005, c.lon, t0 + 3000, 8),
+        pt(-35.3700, -62.3200, t0 + 60000, 8), // primer rural
+        pt(-35.3710, -62.3200, t0 + 65000, 8), // segundo rural
+      ];
+      const res = reduceIncomingBatch(makeSession(), batch, { isSimulator: false });
+      expect(res.pauseMsg).toBeUndefined();
+      expect(res.session.points).toHaveLength(2);
+      expect(res.session.discardedPointsCount).toBe(0);
+      expect(res.session.points[0].lat).toBeCloseTo(-35.37, 4);
+    }
+  });
+
+  it('conserva puntos de un pueblo intermedio sin cortar ni dibujar cuerdas', () => {
+    const t0 = 1795000000000;
+    const batch: RawGpsPoint[] = [
+      pt(-35.3700, -62.3200, t0, 8), // rural
+      pt(-35.3710, -62.3200, t0 + 5000, 8), // rural
+      pt(-35.3475, -62.2229, t0 + 700000, 8), // cruce por Timote (~9.2 km en 695s ~ 13 m/s)
+      pt(-35.3300, -62.2000, t0 + 1000000, 8), // vuelve a rural (~2.8 km en 300s ~ 9 m/s)
+    ];
+    const res = reduceIncomingBatch(makeSession(), batch, { isSimulator: false });
+    expect(res.session.points).toHaveLength(4);
+  });
+
+  it('recorta la cola urbana al finalizar y recalcula distancia neta rural', () => {
+    const t0 = 1795000000000;
+    const pts: RawGpsPoint[] = [
+      pt(-35.3700, -62.3200, t0, 8),
+      pt(-35.3710, -62.3200, t0 + 5000, 8),
+      pt(-35.3915, -62.4200, t0 + 120000, 8), // Carlos Tejedor urbano (cola)
+      pt(-35.3920, -62.4205, t0 + 125000, 8), // Carlos Tejedor urbano (cola)
+    ];
+    const trimmed = trimUrbanTail(pts, false);
+    expect(trimmed.points).toHaveLength(2);
+    expect(trimmed.distanceMeters).toBeGreaterThan(90);
+    expect(trimmed.distanceMeters).toBeLessThan(150);
+  });
+
+  it('recorrido 100 % urbano deja < 2 puntos tras trimUrbanTail', () => {
+    const t0 = 1795000000000;
+    const pts: RawGpsPoint[] = [
+      pt(-35.3915, -62.4200, t0, 8),
+      pt(-35.3920, -62.4205, t0 + 5000, 8),
+    ];
+    const trimmed = trimUrbanTail(pts, false);
+    expect(trimmed.points).toHaveLength(0);
+    expect(trimmed.distanceMeters).toBe(0);
+  });
+
+  it('exime al Modo Simulador tanto al inicio como en la cola', () => {
+    const t0 = 1795000000000;
+    const batch: RawGpsPoint[] = [
+      pt(-35.3915, -62.4200, t0, 8),
+      pt(-35.3925, -62.4200, t0 + 4000, 8),
+    ];
+    const res = reduceIncomingBatch(makeSession(), batch, { isSimulator: true });
+    expect(res.session.points).toHaveLength(2);
+    const trimmed = trimUrbanTail(res.session.points, true);
+    expect(trimmed.points).toHaveLength(2);
+  });
+
+  it('mantiene paridad entre vivo y recuperación (solo inicio urbano)', () => {
+    const t0 = 1795000000000;
+    const batch: RawGpsPoint[] = [
+      pt(-35.3915, -62.4200, t0, 8), // inicio urbano (omitido)
+      pt(-35.3700, -62.3200, t0 + 60000, 8), // rural
+      pt(-35.3710, -62.3200, t0 + 65000, 8), // rural
+      pt(-35.3475, -62.2229, t0 + 800000, 8), // cola urbana (~9.2 km en 735s ~ 12.5 m/s)
+    ];
+    const live = reduceIncomingBatch(makeSession(), batch, { isSimulator: false });
+    const recovered = reduceIncomingBatch(makeSession(), batch, { recoveryMode: true, isSimulator: false });
+    expect(recovered.session.points).toEqual(live.session.points);
+    expect(recovered.session.distanceMeters).toBeCloseTo(live.session.distanceMeters, 6);
+    expect(live.session.points).toHaveLength(3);
   });
 });
