@@ -56,6 +56,7 @@ import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSec
 import { NotificationsView } from './components/NotificationsView';
 import { OperatorWorkspace } from './components/OperatorWorkspace';
 import { BackgroundGps, isNativeGps, toRawPoint, drainNative } from './lib/nativeGps';
+import { reduceIncomingBatch } from './lib/recordingReducer';
 
 function playAlertTone() {
   try {
@@ -261,29 +262,8 @@ export const App: React.FC = () => {
             saved.nativeSeq ?? 0
           );
           if (rawPts.length > 0) {
-            let cur = { ...saved };
-            for (const pt of rawPts) {
-              if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) continue;
-              if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) {
-                cur.discardedPointsCount += 1;
-                continue;
-              }
-              const prev = cur.points.length > 0 ? cur.points[cur.points.length - 1] : null;
-              let delta = 0;
-              if (prev) {
-                delta = calculateDistanceMeters(prev.lat, prev.lon, pt.lat, pt.lon);
-                const dt = (pt.timestamp - prev.timestamp) / 1000;
-                if (dt > 0.3 && delta / dt > 42) {
-                  cur.discardedPointsCount += 1;
-                  continue;
-                }
-                if (isGpsJitterOrReverse(cur.points, pt, delta)) continue;
-              }
-              cur.distanceMeters += delta;
-              cur.points = [...cur.points, pt];
-            }
-            cur.nativeSeq = lastSeq;
-            baseSession = cur;
+            const reduced = reduceIncomingBatch(saved, rawPts, { recoveryMode: true });
+            baseSession = { ...reduced.session, nativeSeq: lastSeq };
           }
           await BackgroundGps.stop().catch(() => {});
         } catch {}
@@ -488,105 +468,20 @@ export const App: React.FC = () => {
     releaseWakeLock();
   };
 
-  // Función 100% pura que aplica los filtros de geocerca, velocidad y cinemática sobre una sesión
-  const reduceIncomingPoint = (
-    cur: ActiveRecordingSession,
-    pt: RawGpsPoint,
-    highSpeedStartedAt: number | null
-  ): {
-    next: ActiveRecordingSession;
-    nextHighSpeedStartedAt: number | null;
-    pauseMsg?: string;
-  } => {
-    // 1. Filtro geográfico oficial del Partido de Carlos Tejedor (con margen de 3 km)
-    if (!isPointInsideCarlosTejedor(pt.lat, pt.lon, 3)) {
-      return {
-        next: cur,
-        nextHighSpeedStartedAt: highSpeedStartedAt,
-        pauseMsg:
-          'Saliste del Partido de Carlos Tejedor (límite municipal con tolerancia de 3 km). Grabación pausada preventivamente.',
-      };
-    }
-
-    // 2. Filtro de velocidad sostenida en ruta (30 minutos continuos a > 100 km/h)
-    let nextHs = highSpeedStartedAt;
-    const speedKmH = pt.speed != null ? pt.speed * 3.6 : null;
-    if (speedKmH != null && speedKmH > 100) {
-      if (nextHs === null) {
-        nextHs = pt.timestamp || Date.now();
-      } else if ((pt.timestamp || Date.now()) - nextHs >= 30 * 60 * 1000) {
-        return {
-          next: cur,
-          nextHighSpeedStartedAt: null,
-          pauseMsg:
-            'Se detectó velocidad de ruta sostenida (> 100 km/h por más de 30 minutos). Grabación pausada preventivamente.',
-        };
-      }
-    } else if (speedKmH != null && speedKmH < 90) {
-      nextHs = null;
-    }
-
-    // 3. Filtrar puntos con precisión mala (> umbral configurable)
-    if (pt.accuracy > DEFAULT_MAX_GPS_ACCURACY_M) {
-      return {
-        next: {
-          ...cur,
-          discardedPointsCount: cur.discardedPointsCount + 1,
-        },
-        nextHighSpeedStartedAt: nextHs,
-      };
-    }
-
-    const prevPoint = cur.points.length > 0 ? cur.points[cur.points.length - 1] : null;
-    let deltaMeters = 0;
-
-    if (prevPoint) {
-      deltaMeters = calculateDistanceMeters(prevPoint.lat, prevPoint.lon, pt.lat, pt.lon);
-      // 4. Filtro cinemático de velocidad aparente (> 42 m/s ~ 151 km/h entre dos puntos = salto de antena)
-      const dt = (pt.timestamp - prevPoint.timestamp) / 1000;
-      if (dt > 0.3 && deltaMeters / dt > 42) {
-        return {
-          next: {
-            ...cur,
-            discardedPointsCount: cur.discardedPointsCount + 1,
-          },
-          nextHighSpeedStartedAt: nextHs,
-        };
-      }
-      // 5. Filtro Anti-Jitter y Anti-Retroceso (evita idas y vueltas artificiales en esquinas o paradas)
-      if (isGpsJitterOrReverse(cur.points, pt, deltaMeters)) {
-        return { next: cur, nextHighSpeedStartedAt: nextHs };
-      }
-    }
-
-    return {
-      next: {
-        ...cur,
-        distanceMeters: cur.distanceMeters + deltaMeters,
-        points: [...cur.points, pt],
-      },
-      nextHighSpeedStartedAt: nextHs,
-    };
-  };
-
   // Procesa un lote de puntos GPS de forma atómica sobre sessionRef.current (sin pisar estado en lotes)
   const ingestPoints = async (pts: RawGpsPoint[], newNativeSeq?: number) => {
     let cur = sessionRef.current;
     if (!cur || cur.status !== 'recording' || rejectRef.current) return;
 
-    let hs = highSpeedStartRef.current;
-    let pauseMsg: string | undefined;
-    for (const pt of pts) {
-      setLastAccuracy(Math.round(pt.accuracy));
-      const res = reduceIncomingPoint(cur, pt, hs);
-      cur = res.next;
-      hs = res.nextHighSpeedStartedAt;
-      if (res.pauseMsg) {
-        pauseMsg = res.pauseMsg;
-        break;
-      }
+    if (pts.length > 0) {
+      setLastAccuracy(Math.round(pts[pts.length - 1].accuracy));
     }
-    highSpeedStartRef.current = hs;
+
+    const reduced = reduceIncomingBatch(cur, pts, {
+      initialHighSpeedStartedAt: highSpeedStartRef.current,
+    });
+    cur = reduced.session;
+    highSpeedStartRef.current = reduced.nextHighSpeedStartedAt;
 
     if (newNativeSeq !== undefined && newNativeSeq > (cur.nativeSeq ?? 0)) {
       cur = { ...cur, nativeSeq: newNativeSeq };
@@ -596,8 +491,9 @@ export const App: React.FC = () => {
     setRecordingSession(cur);
     await saveActiveRecordingSession(cur);
 
-    if (pauseMsg) {
+    if (reduced.pauseMsg) {
       // Bloquear nuevos puntos solo en auto-pausa y no esperar acá dentro del cerrojo drainingRef
+      const pauseMsg = reduced.pauseMsg;
       rejectRef.current = true;
       void pauseRecording().then(() => setGpsError(pauseMsg));
     }
