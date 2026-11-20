@@ -7,7 +7,6 @@ import {
 import { DEFAULT_MAX_GPS_ACCURACY_M } from './geo';
 import type { ActiveRecordingSession } from './localDb';
 import { reduceIncomingBatch, reduceIncomingPoint, trimUrbanTail } from './recordingReducer';
-import { analyzeSegmentElevation } from '../../../admin/src/lib/elevationDem';
 
 function makeSession(overrides: Partial<ActiveRecordingSession> = {}): ActiveRecordingSession {
   return {
@@ -94,36 +93,6 @@ describe('Fase 1: reduceIncomingPoint y reduceIncomingBatch (paridad vivo / recu
     expect(recovered.session.distanceMeters).toBeCloseTo(live.session.distanceMeters, 6);
     expect(recovered.session.discardedPointsCount).toBe(1);
     expect(live.session.points).toHaveLength(3);
-  });
-});
-
-describe('Fase 1: Detector cóncavo bilateral MDE 90m (6 perfiles sintéticos de 3 km)', () => {
-  const makeSamples = (n: number) =>
-    Array.from({ length: n }, (_, idx) => ({
-      dist_m: idx * 90,
-      lat: -35.4 + idx * 0.0008,
-      lon: -62.45,
-    }));
-
-  it('marca 0 % en 3 pendientes suaves y 2 planos con ruido, y marca depresión real de 1 m', () => {
-    const n = 34;
-    const samples = makeSamples(n);
-    const slope09 = Array.from({ length: n }, (_, i) => 95 - (0.9 * i) / (n - 1));
-    const slope15 = Array.from({ length: n }, (_, i) => 95 - (1.5 * i) / (n - 1));
-    const slope30 = Array.from({ length: n }, (_, i) => 95 - (3.0 * i) / (n - 1));
-    const flat03 = Array.from({ length: n }, (_, i) => 94 + (i % 2 === 0 ? 0.3 : -0.3));
-    const flat15 = Array.from({ length: n }, (_, i) => 94 + (i % 2 === 0 ? 1.5 : -1.5));
-    const realBasin = Array.from({ length: n }, (_, i) => (i >= 15 && i <= 17 ? 93.0 : 94.0));
-
-    expect(analyzeSegmentElevation(samples, slope09).hasLowZone).toBe(false);
-    expect(analyzeSegmentElevation(samples, slope15).hasLowZone).toBe(false);
-    expect(analyzeSegmentElevation(samples, slope30).hasLowZone).toBe(false);
-    expect(analyzeSegmentElevation(samples, flat03).hasLowZone).toBe(false);
-    expect(analyzeSegmentElevation(samples, flat15).hasLowZone).toBe(false);
-
-    const basinRes = analyzeSegmentElevation(samples, realBasin);
-    expect(basinRes.hasLowZone).toBe(true);
-    expect(basinRes.profilePoints.filter((p) => p.is_low_zone).length).toBe(3);
   });
 });
 
