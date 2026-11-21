@@ -95,9 +95,8 @@ function main() {
   ];
 
   const tsContent = `// Generado automáticamente por scripts/generate-urban-polygons.mjs
-// Fuente base: Instituto Geográfico Nacional (IGN) — WFS capa ign:areas_de_asentamientos_y_edificios_020105
-// Validado y ajustado sobre vista satelital en packages/shared/src/urbanas-tejedor.geojson (incluye acceso oeste de Carlos Tejedor)
-// Recorte aplicado: ~28 m respecto al contorno IGN | Precisión: 5 decimales | 0 autointersecciones
+// Fuente de verdad: packages/shared/src/urbanas-tejedor.geojson (base IGN WFS ign:areas_de_asentamientos_y_edificios_020105 + ajuste satelital + corredor acceso oeste 60 m)
+// Precisión: 5 decimales | 0 autointersecciones
 
 export interface UrbanLocalityPolygon {
   name: string;
@@ -106,11 +105,10 @@ export interface UrbanLocalityPolygon {
 }
 
 export const IGN_URBAN_METADATA = {
-  source: 'Instituto Geográfico Nacional (IGN) + ajuste visual municipal',
+  source: 'Instituto Geográfico Nacional (IGN) + ajuste satelital municipal',
   layer: 'ign:areas_de_asentamientos_y_edificios_020105',
   fetchedAt: '2026-11-20',
-  negativeBufferMeters: 28,
-  simplifyToleranceMeters: 4.5,
+  westAccessCorridorWidthMeters: 60,
 } as const;
 
 export const CARLOS_TEJEDOR_URBAN_GLOBAL_BBOX: [number, number, number, number] = ${JSON.stringify(globalBbox)};
