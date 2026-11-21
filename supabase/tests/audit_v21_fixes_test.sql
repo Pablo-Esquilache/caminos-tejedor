@@ -70,7 +70,9 @@ BEGIN
     PERFORM public.admin_recalculate_intervention_metrics(gen_random_uuid());
     RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar admin_recalculate_intervention_metrics';
   EXCEPTION WHEN SQLSTATE '42501' THEN
-    NULL;
+    IF SQLERRM NOT LIKE '%Permiso denegado%' THEN
+      RAISE;
+    END IF;
   END;
 
   EXECUTE 'RESET ROLE';
@@ -107,14 +109,30 @@ BEGIN
     IF SQLERRM NOT LIKE '%fuera de rango%' THEN RAISE; END IF;
   END;
 
-  -- 2.d Payload excedido (> 300 muestras) -> rechazado
+  -- 2.d Bordes exactos de tamaño de payload (1 -> rechaza, 300 -> acepta, 301 -> rechaza)
+  BEGIN
+    PERFORM public.admin_save_segment_elevation(
+      v_seg_id,
+      '[{"dist_m":0,"lat":-35.40,"lon":-62.42,"elev_m":94.1,"is_low_zone":false}]'::jsonb,
+      NULL, 94.1, 94.1, 94.1, false, 'copernicus-dem-90m', v_hash
+    );
+    RAISE EXCEPTION 'Fallo 021: aceptó 1 sola muestra (mínimo es 2)';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%fuera de rango permitido%' THEN RAISE; END IF;
+  END;
+
   SELECT jsonb_agg(jsonb_build_object('dist_m', g * 90, 'lat', -35.4, 'lon', -62.42, 'elev_m', 94.0, 'is_low_zone', false))
   INTO v_oversize_pts
-  FROM generate_series(0, 305) AS g;
+  FROM generate_series(0, 299) AS g;
+  PERFORM public.admin_save_segment_elevation(v_seg_id, v_oversize_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', v_hash);
+
+  SELECT jsonb_agg(jsonb_build_object('dist_m', g * 90, 'lat', -35.4, 'lon', -62.42, 'elev_m', 94.0, 'is_low_zone', false))
+  INTO v_oversize_pts
+  FROM generate_series(0, 300) AS g;
 
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_oversize_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', v_hash);
-    RAISE EXCEPTION 'Fallo 021: aceptó > 300 muestras';
+    RAISE EXCEPTION 'Fallo 021: aceptó 301 muestras (máximo es 300)';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM NOT LIKE '%fuera de rango permitido%' THEN RAISE; END IF;
   END;

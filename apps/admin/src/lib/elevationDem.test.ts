@@ -48,6 +48,26 @@ describe('Detector cóncavo bilateral MDE 90m (caracterización)', () => {
     expect(analyzeSegmentElevation(samples, alt15).hasLowZone).toBe(false);
   });
 
+  it('exige 0 falsos positivos en 200 semillas a ±0,25 m y documenta la tasa real a ±0,50 m', () => {
+    const n = 34;
+    const samples = makeSamples(n);
+
+    let fp025 = 0;
+    let fp050 = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const flat025 = deterministicNoise(seed, 0.25, n).map((d) => 94 + d);
+      if (analyzeSegmentElevation(samples, flat025).hasLowZone) fp025 += 1;
+
+      const flat050 = deterministicNoise(seed + 1000, 0.5, n).map((d) => 94 + d);
+      if (analyzeSegmentElevation(samples, flat050).hasLowZone) fp050 += 1;
+    }
+
+    expect(fp025).toBe(0);
+    // Documentamos explícitamente la tasa medida a ±0,50 m (ruido cercano al umbral de 0,55/0,65 m)
+    console.info(`[Caracterización MDE] Falsos positivos en 200 semillas: ±0,25m=${fp025}/200 | ±0,50m=${fp050}/200`);
+    expect(fp050).toBeLessThan(60);
+  });
+
   it('detecta una depresión real de 1 m (3 de 34 muestras)', () => {
     const n = 34;
     const samples = makeSamples(n);
