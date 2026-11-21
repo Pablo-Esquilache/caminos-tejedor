@@ -91,7 +91,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B build-log
-          tail -n 120 /tmp/gradle_output.txt > LAST_BUILD_LOG.txt
+          { grep -B 3 -A 40 "FAILURE:" /tmp/gradle_output.txt || true; echo "--- TAIL ---"; tail -n 80 /tmp/gradle_output.txt; } > LAST_BUILD_LOG.txt
           git add LAST_BUILD_LOG.txt
           git commit -m "ci: log de compilacion gradle [skip ci]" || true
           git push -f origin build-log
