@@ -82,7 +82,7 @@ jobs:
       - name: Build Android APK (Debug)
         run: |
           cd apps/mobile/android
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle_output.txt
+          ./gradlew assembleDebug --no-daemon --refresh-dependencies --stacktrace 2>&1 | tee /tmp/gradle_output.txt
           test ${PIPESTATUS[0]} -eq 0
 
       - name: Push Build Log to Debug Branch
