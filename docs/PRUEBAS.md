@@ -46,6 +46,12 @@ El comando `npm run db:test` ejecuta contra Supabase PostgreSQL (dentro de trans
   6. Cortar GPS a mitad de recorrido.
   7. Confirmar ausencia del "abanico" de líneas hacia antenas del pueblo.
   8. Sacar foto vertical y horizontal y validar orientación correcta.
+* **Pruebas específicas de Geocerca Urbana (`npm --prefix apps/mobile test` + campo):**
+  1. Iniciar dentro de un pueblo con pantalla bloqueada, salir al camino rural (por 3 accesos conocidos) y verificar que arranca en el borde sin grabar cuadras urbanas.
+  2. Pasar por un pueblo intermedio y confirmar que no hay cuerdas artificiales.
+  3. Volver al pueblo y finalizar: la traza guardada debe contener solo camino rural.
+  4. Matar la app en espera (`0 puntos` dentro del pueblo) y reabrir.
+  5. Matar la app ya en el campo y reabrir (recuperación normal).
 * **Pruebas visuales en Admin (capa satelital NASA GIBS):**
   * Comparar contra un reclamo con agua en su fecha, una fecha seca y un día nublado en modo óptico.
 

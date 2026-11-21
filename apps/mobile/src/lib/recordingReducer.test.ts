@@ -113,6 +113,16 @@ describe('Fase 2: Geocerca de Ejido Urbano (5 localidades IGN)', () => {
     expect(isPointInsideUrbanArea(-35.37, -62.32)).toBe(false);
   });
 
+  it('valida puntos a ±30 m sobre el borde norte de Carlos Tejedor y el acceso oeste', () => {
+    // Borde norte aproximado de Carlos Tejedor (~lat -35.3847, lon -62.4215):
+    // 30 m en latitud ≈ 0.00027°
+    expect(isPointInsideUrbanArea(-35.3852, -62.4215)).toBe(true); // ~50m adentro
+    expect(isPointInsideUrbanArea(-35.3834, -62.4215)).toBe(false); // ~50m afuera al norte
+    // Acceso oeste estirado manualmente (-62.4466, -35.4010): adentro en el eje, afuera 40m al oeste
+    expect(isPointInsideUrbanArea(-35.3997, -62.4390)).toBe(true);
+    expect(isPointInsideUrbanArea(-35.4010, -62.4472)).toBe(false);
+  });
+
   it('soporta MultiPolygon con huecos en isPointInMultiPolygon', () => {
     const polyWithHole = [
       [
