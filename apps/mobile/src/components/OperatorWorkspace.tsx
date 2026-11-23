@@ -1156,6 +1156,19 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     [points]
   );
 
+  const { activeTasks, rejectedTasks } = useMemo(() => {
+    const active: InterventionSummary[] = [];
+    const rejected: InterventionSummary[] = [];
+    for (const task of tasks) {
+      if (task.status === 'rejected') {
+        rejected.push(task);
+      } else {
+        active.push(task);
+      }
+    }
+    return { activeTasks: active, rejectedTasks: rejected };
+  }, [tasks]);
+
   // ===========================================================================
   // RENDERIZADO: MODO EJECUCIÓN EN CAMPO (ACTIVO)
   // ===========================================================================
@@ -1615,19 +1628,6 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       </div>
     );
   }
-
-  const { activeTasks, rejectedTasks } = useMemo(() => {
-    const active: InterventionSummary[] = [];
-    const rejected: InterventionSummary[] = [];
-    for (const task of tasks) {
-      if (task.status === 'rejected') {
-        rejected.push(task);
-      } else {
-        active.push(task);
-      }
-    }
-    return { activeTasks: active, rejectedTasks: rejected };
-  }, [tasks]);
 
   const renderTaskCard = (t: InterventionSummary) => {
     const isActionable = ['planned', 'suspended', 'in_progress', 'rejected'].includes(
