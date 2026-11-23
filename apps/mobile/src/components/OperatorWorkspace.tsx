@@ -104,6 +104,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
   // Vista de tarea seleccionada en mapa de detalle
   const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
+  const [previewCurrentLoc, setPreviewCurrentLoc] = useState<[number, number] | null>(null);
   const previewMapRef = useRef<maplibregl.Map | null>(null);
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -463,6 +464,96 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       previewMapRef.current = null;
     };
   }, [previewTaskId]);
+
+  // Obtener ubicación actual en silencio para la vista previa (sin pedir permisos ni recrear mapa)
+  useEffect(() => {
+    if (!previewTaskId) {
+      setPreviewCurrentLoc(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const perm = await Geolocation.checkPermissions();
+        if (perm.location !== 'granted' && perm.coarseLocation !== 'granted') {
+          return;
+        }
+        const pos = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: false,
+          timeout: 4000,
+          maximumAge: 60000,
+        });
+        if (!cancelled && pos?.coords) {
+          setPreviewCurrentLoc([pos.coords.longitude, pos.coords.latitude]);
+        }
+      } catch {
+        // Fallback silencioso si no hay permiso o señal GPS
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [previewTaskId]);
+
+  // Dibujar marcador de ubicación actual en el mapa de vista previa en efecto separado
+  useEffect(() => {
+    const map = previewMapRef.current;
+    if (!previewTaskId || !map || !previewCurrentLoc) return;
+
+    const drawMarker = () => {
+      if (!previewMapRef.current) return;
+      const featureData: GeoJSON.FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'Point', coordinates: previewCurrentLoc },
+          },
+        ],
+      };
+
+      const existing = map.getSource('op-preview-current-loc') as maplibregl.GeoJSONSource | undefined;
+      if (existing) {
+        existing.setData(featureData as any);
+        return;
+      }
+
+      map.addSource('op-preview-current-loc', {
+        type: 'geojson',
+        data: featureData as any,
+      });
+      map.addLayer({
+        id: 'op-preview-current-halo',
+        type: 'circle',
+        source: 'op-preview-current-loc',
+        paint: {
+          'circle-radius': 13,
+          'circle-color': '#2563eb',
+          'circle-opacity': 0.22,
+        },
+      });
+      map.addLayer({
+        id: 'op-preview-current-dot',
+        type: 'circle',
+        source: 'op-preview-current-loc',
+        paint: {
+          'circle-radius': 7,
+          'circle-color': '#2563eb',
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+    };
+
+    if (map.isStyleLoaded()) {
+      drawMarker();
+    } else {
+      map.once('load', drawMarker);
+    }
+  }, [previewTaskId, previewCurrentLoc]);
 
   const stopWebAndFallbackGps = () => {
     if (nativeBgListenerRef.current?.remove) {
