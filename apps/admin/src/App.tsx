@@ -266,6 +266,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (!isAdminVerified) return;
     loadDashboardSummary();
+    loadNewClaimsCount();
     loadTrips(0);
     loadRoads(0);
     loadUsers(0);
@@ -283,6 +284,7 @@ export const App: React.FC = () => {
 
     const shellPoll = window.setInterval(() => {
       loadDashboardSummary();
+      loadNewClaimsCount();
     }, 20000);
 
     return () => {
@@ -788,6 +790,9 @@ export const App: React.FC = () => {
           >
             <AlertOctagon size={18} />
             <span>Reclamos</span>
+            {newClaimsCount > 0 && (
+              <span className="side-badge">{newClaimsCount}</span>
+            )}
           </button>
 
           <button
