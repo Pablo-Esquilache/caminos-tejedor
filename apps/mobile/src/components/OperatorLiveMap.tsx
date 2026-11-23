@@ -47,6 +47,8 @@ export const OperatorLiveMap: React.FC<OperatorLiveMapProps> = ({
   const lastDrawAtRef = useRef<number>(0);
   const throttleTimerRef = useRef<number | null>(null);
   const hasCenteredOnLiveRef = useRef<boolean>(false);
+  const followLiveRef = useRef<boolean>(true);
+  const [isUserPanned, setIsUserPanned] = useState<boolean>(false);
 
   const renderOverlaySources = (map: maplibregl.Map, planned: any, worked: any) => {
     const plannedFc: GeoJSON.FeatureCollection = {
@@ -179,11 +181,11 @@ export const OperatorLiveMap: React.FC<OperatorLiveMapProps> = ({
     renderLiveTrack(map, coords);
     lastDrawAtRef.current = Date.now();
 
-    if (coords.length > 0) {
+    if (coords.length > 0 && followLiveRef.current) {
       const target = coords[coords.length - 1];
       map.easeTo({
         center: target,
-        zoom: hasCenteredOnLiveRef.current ? Math.max(map.getZoom(), 14.5) : 15,
+        zoom: hasCenteredOnLiveRef.current ? map.getZoom() : 15,
         duration: 450,
       });
       hasCenteredOnLiveRef.current = true;
@@ -211,6 +213,15 @@ export const OperatorLiveMap: React.FC<OperatorLiveMapProps> = ({
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+    const handleUserGesture = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) {
+        followLiveRef.current = false;
+        setIsUserPanned(true);
+      }
+    };
+    map.on('dragstart', handleUserGesture);
+    map.on('zoomstart', handleUserGesture);
 
     map.on('load', () => {
       const { coordinates: c, plannedGeojson: p, workedGeojson: w } = latestPropsRef.current;
@@ -289,6 +300,41 @@ export const OperatorLiveMap: React.FC<OperatorLiveMapProps> = ({
           Mapa Base
         </button>
       </div>
+      {isUserPanned && coordinates.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            followLiveRef.current = true;
+            setIsUserPanned(false);
+            const map = mapRef.current;
+            const last = coordinates[coordinates.length - 1];
+            if (map && last) {
+              map.easeTo({
+                center: last,
+                zoom: Math.max(map.getZoom(), 15),
+                duration: 450,
+              });
+            }
+          }}
+          style={{
+            position: 'absolute',
+            bottom: 10,
+            right: 10,
+            zIndex: 4,
+            background: '#0f172a',
+            color: '#ffffff',
+            border: '1px solid rgba(255,255,255,0.25)',
+            borderRadius: 8,
+            padding: '6px 10px',
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+          }}
+        >
+          Recentrar
+        </button>
+      )}
     </div>
   );
 };

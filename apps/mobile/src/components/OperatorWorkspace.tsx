@@ -468,8 +468,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
   // Obtener ubicación actual en silencio para la vista previa (sin pedir permisos ni recrear mapa)
   useEffect(() => {
+    setPreviewCurrentLoc(null);
     if (!previewTaskId) {
-      setPreviewCurrentLoc(null);
       return;
     }
 
@@ -1043,7 +1043,6 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       console.error('Error procesando fotografía:', err);
       const errTxt = `No se pudo procesar la fotografía: ${err?.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`;
       setPhotoError(errTxt);
-      setGpsError(errTxt);
     } finally {
       setCompressingPhoto(false);
       e.target.value = '';
