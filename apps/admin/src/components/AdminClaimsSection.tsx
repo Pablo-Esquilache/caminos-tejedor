@@ -399,7 +399,8 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
           <div className={`trips-split-layout ${selectedDetail || loadingDetail ? 'has-detail' : 'full-width'}`}>
             {/* Tabla de Reclamos */}
             <div className="panel-card table-card">
-              <table className="admin-table">
+              <div className="table-scroll-wrap">
+                <table className="admin-table">
                 <thead>
                   <tr>
                     <th>Foto</th>
@@ -474,6 +475,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
                   })}
                 </tbody>
               </table>
+              </div>
 
               <div className="pagination-bar">
                 <span>
@@ -688,7 +690,8 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
               </div>
             </div>
 
-            <table className="admin-table">
+            <div className="table-scroll-wrap">
+              <table className="admin-table">
               <thead>
                 <tr>
                   <th>Orden</th>
@@ -743,6 +746,7 @@ export const AdminClaimsSection: React.FC<AdminClaimsSectionProps> = ({
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           <div className="panel-card detail-inspector">

@@ -987,13 +987,22 @@ body {
 
 .trips-split-layout {
   display: grid;
-  grid-template-columns: 1.35fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
 .trips-split-layout.full-width {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.trips-split-layout > * {
+  min-width: 0;
+}
+
+.table-scroll-wrap {
+  width: 100%;
+  overflow-x: auto;
 }
 
 .btn-icon-close {
@@ -1351,4 +1360,37 @@ body {
 
 .selected-row {
   background: #f0fdf4;
+}
+
+.table-card,
+.detail-inspector {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detail-inspector {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.detail-inspector .inspector-content,
+.detail-inspector .inspector-header,
+.detail-inspector .inspector-meta-grid > div,
+.detail-inspector .note-box,
+.detail-inspector .admin-claim-form,
+.detail-inspector .admin-history-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.detail-inspector img,
+.detail-inspector .admin-map-container {
+  max-width: 100%;
+}
+
+@media (max-width: 1200px) {
+  .trips-split-layout,
+  .trips-split-layout.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
