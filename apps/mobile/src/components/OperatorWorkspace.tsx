@@ -99,6 +99,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [syncingOutbox, setSyncingOutbox] = useState(false);
   const [bannerMsg, setBannerMsg] = useState<string | null>(null);
+  const [bannerTone, setBannerTone] = useState<'success' | 'warning' | 'error'>('success');
+  const bannerTimerRef = useRef<number | null>(null);
 
   // Vista de tarea seleccionada en mapa de detalle
   const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
@@ -145,8 +147,29 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   const [photos, setPhotos] = useState<
     Array<{ photoBlob: Blob; thumbBlob: Blob; previewUrl: string }>
   >([]);
+  const [compressingPhoto, setCompressingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [submittingWork, setSubmittingWork] = useState(false);
+
+  const showBanner = (
+    msg: string,
+    tone: 'success' | 'warning' | 'error' = 'success',
+    autoDismissMs?: number
+  ) => {
+    if (bannerTimerRef.current !== null) {
+      window.clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = null;
+    }
+    setBannerMsg(msg);
+    setBannerTone(tone);
+    if (tone !== 'error' && autoDismissMs) {
+      bannerTimerRef.current = window.setTimeout(() => {
+        setBannerMsg(null);
+        bannerTimerRef.current = null;
+      }, autoDismissMs);
+    }
+  };
 
   const watchIdRef = useRef<number | null>(null);
   const nativeWatchRef = useRef<string | null>(null);
@@ -237,7 +260,9 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     return pending;
   };
 
-  const syncSingleOutboxItem = async (item: PendingInterventionOutboxItem): Promise<boolean> => {
+  const syncSingleOutboxItem = async (
+    item: PendingInterventionOutboxItem
+  ): Promise<{ ok: boolean; error?: string }> => {
     const uploadedPhotos: Array<{ storage_path: string; thumb_path: string }> = [];
     const targetFolderId = item.intervention_id || item.session_id;
 
@@ -252,9 +277,12 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
           .upload(mainPath, ph.photoBlob, { contentType: 'image/jpeg', upsert: true });
         if (upErr) throw new Error(upErr.message);
 
-        await supabase.storage
+        const { error: thumbErr } = await supabase.storage
           .from('claim-photos')
           .upload(thumbPath, ph.thumbBlob, { contentType: 'image/jpeg', upsert: true });
+        if (thumbErr) {
+          throw new Error(thumbErr.message || 'Error al subir miniatura de foto');
+        }
 
         uploadedPhotos.push({ storage_path: mainPath, thumb_path: thumbPath });
       }
@@ -284,14 +312,15 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       if (error) throw new Error(error.message);
 
       await removeInterventionFromOutbox(item.session_id);
-      return true;
+      return { ok: true };
     } catch (err: any) {
+      const msg = err?.message || 'Error al sincronizar trabajo';
       await saveInterventionToOutbox({
         ...item,
         status: 'error',
-        last_error: err?.message || 'Error al sincronizar trabajo',
+        last_error: msg,
       });
-      return false;
+      return { ok: false, error: msg };
     }
   };
 
@@ -302,14 +331,22 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     setSyncingOutbox(true);
     let okCount = 0;
+    let lastErr: string | undefined;
     for (const item of pending) {
-      if (await syncSingleOutboxItem(item)) okCount++;
+      const res = await syncSingleOutboxItem(item);
+      if (res.ok) {
+        okCount++;
+      } else if (res.error) {
+        lastErr = res.error;
+      }
     }
     setSyncingOutbox(false);
+    await refreshOutbox();
     await loadDataAndCache();
-    if (okCount > 0) {
-      setBannerMsg(`Se sincronizaron ${okCount} parte(s) de trabajo con el Municipio.`);
-      window.setTimeout(() => setBannerMsg(null), 5000);
+    if (lastErr) {
+      showBanner(`Error al enviar parte pendiente: ${lastErr}`, 'error');
+    } else if (okCount > 0) {
+      showBanner(`Se sincronizaron ${okCount} parte(s) de trabajo con el Municipio.`, 'success', 5000);
     }
   };
 
@@ -769,6 +806,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   ) => {
     setPreviewTaskId(null);
     setGpsError(null);
+    setPhotoError(null);
+    setCompressingPhoto(false);
     setPhotos([]);
     setNotes('');
     setNearbyClaims([]);
@@ -895,6 +934,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setGpsError(null);
+    setPhotoError(null);
+    setCompressingPhoto(true);
     try {
       const added: Array<{ photoBlob: Blob; thumbBlob: Blob; previewUrl: string }> = [];
       for (let i = 0; i < Math.min(files.length, 3 - photos.length); i++) {
@@ -908,10 +949,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       setPhotos((prev) => [...prev, ...added]);
     } catch (err: any) {
       console.error('Error procesando fotografía:', err);
-      setGpsError(
-        `No se pudo procesar la fotografía: ${err.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`
-      );
+      const errTxt = `No se pudo procesar la fotografía: ${err?.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`;
+      setPhotoError(errTxt);
+      setGpsError(errTxt);
     } finally {
+      setCompressingPhoto(false);
       e.target.value = '';
     }
   };
@@ -919,6 +961,10 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   const submitCurrentWork = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeWork) return;
+    if (compressingPhoto) {
+      setPhotoError('Esperá unos segundos a que termine de procesarse la fotografía.');
+      return;
+    }
 
     if (activeWork.executionMode === 'linear' && points.length < 2) {
       setGpsError('Necesitás al menos 2 puntos GPS grabados en el tramo para guardar la jornada.');
@@ -969,24 +1015,37 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     opSessionIdRef.current = null;
     nativeSeqRef.current = 0;
     persistOperatorSessionMeta(null, null, '', 0, null);
-    let syncedNow = false;
+    let syncResult: { ok: boolean; error?: string } = { ok: false };
     if (isOnline) {
-      syncedNow = await syncSingleOutboxItem(outboxItem);
+      syncResult = await syncSingleOutboxItem(outboxItem);
     }
 
     setSubmittingWork(false);
     setActiveWork(null);
     setRecStatus('idle');
+    await refreshOutbox();
     await loadDataAndCache();
 
-    setBannerMsg(
-      syncedNow
-        ? finishAction === 'suspend'
+    if (syncResult.ok) {
+      showBanner(
+        finishAction === 'suspend'
           ? 'Jornada guardada ("Terminar por hoy"). Quedó lista para reanudar mañana sin duplicar la tarea.'
-          : '¡Trabajo enviado a validación municipal exitosamente!'
-        : 'Sin señal en el campo: el parte de trabajo y sus fotos quedaron guardados en el dispositivo y se enviarán automáticamente al volver la señal.'
-    );
-    window.setTimeout(() => setBannerMsg(null), 6000);
+          : '¡Trabajo enviado a validación municipal exitosamente!',
+        'success',
+        6000
+      );
+    } else if (!isOnline) {
+      showBanner(
+        'Sin señal en el campo: el parte de trabajo y sus fotos quedaron guardados en el dispositivo y se enviarán automáticamente al volver la señal.',
+        'warning',
+        6000
+      );
+    } else {
+      showBanner(
+        `No se pudo enviar el parte: ${syncResult.error || 'Error inesperado'}. Quedó guardado en pendientes para reintentar.`,
+        'error'
+      );
+    }
   };
 
   // ===========================================================================
@@ -1279,17 +1338,33 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                         fontSize: 13,
                       }}
                     >
-                      <Camera size={16} /> Sacar / Elegir Foto
+                      <Camera size={16} />{' '}
+                      {compressingPhoto ? 'Procesando foto...' : 'Sacar / Elegir Foto'}
                       <input
                         type="file"
                         accept="image/*"
                         capture="environment"
+                        disabled={compressingPhoto}
                         style={{ display: 'none' }}
                         onChange={handlePhotoPick}
                       />
                     </label>
                   )}
                 </div>
+                {photoError && (
+                  <div className="alert-box error" style={{ marginTop: 8, marginBottom: 0 }}>
+                    <AlertTriangle size={16} />
+                    <span style={{ flex: 1 }}>{photoError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPhotoError(null)}
+                      style={{ background: 'transparent', border: 'none', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}
+                      aria-label="Cerrar error de foto"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Vinculación opcional con reclamo cercano */}
@@ -1353,13 +1428,20 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                   </button>
                 )}
 
-                <button type="submit" className="btn-primary" style={{ flex: 1 }} disabled={submittingWork}>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={submittingWork || compressingPhoto}
+                >
                   <CheckCircle2 size={18} />
-                  {submittingWork
-                    ? 'Guardando...'
-                    : finishAction === 'suspend'
-                      ? 'Confirmar Pausa hasta mañana'
-                      : 'Enviar Trabajo Terminado'}
+                  {compressingPhoto
+                    ? 'Procesando foto...'
+                    : submittingWork
+                      ? 'Guardando...'
+                      : finishAction === 'suspend'
+                        ? 'Confirmar Pausa hasta mañana'
+                        : 'Enviar Trabajo Terminado'}
                 </button>
               </div>
             </form>
@@ -1414,9 +1496,26 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   return (
     <div className="tab-pane">
       {bannerMsg && (
-        <div className="alert-box" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}>
-          <CheckCircle2 size={18} />
-          <span>{bannerMsg}</span>
+        <div
+          className="alert-box"
+          style={
+            bannerTone === 'error'
+              ? { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }
+              : bannerTone === 'warning'
+                ? { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
+                : { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }
+          }
+        >
+          {bannerTone === 'error' ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
+          <span style={{ flex: 1 }}>{bannerMsg}</span>
+          <button
+            type="button"
+            onClick={() => setBannerMsg(null)}
+            style={{ background: 'transparent', border: 'none', color: 'inherit', fontWeight: 700, fontSize: 16, cursor: 'pointer' }}
+            aria-label="Cerrar aviso"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -1428,6 +1527,17 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
             <div style={{ fontSize: 12 }}>
               {isOnline ? 'Listo para sincronizar.' : 'Se enviarán al recuperar señal.'}
             </div>
+            {outboxList.some((it) => it.last_error) && (
+              <div style={{ fontSize: 12, color: '#991b1b', marginTop: 4 }}>
+                {outboxList
+                  .filter((it) => it.last_error)
+                  .map((it) => (
+                    <div key={it.session_id}>
+                      • {it.title || 'Parte'}: {it.last_error}
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
           {isOnline && (
             <button
@@ -1436,7 +1546,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
               onClick={syncPendingInterventions}
               disabled={syncingOutbox}
             >
-              {syncingOutbox ? 'Enviando...' : 'Enviar'}
+              {syncingOutbox
+                ? 'Enviando...'
+                : outboxList.some((it) => it.status === 'error')
+                  ? 'Reintentar'
+                  : 'Enviar'}
             </button>
           )}
         </div>
