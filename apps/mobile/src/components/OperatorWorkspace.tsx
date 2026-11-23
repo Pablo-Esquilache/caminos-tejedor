@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import {
   CARLOS_TEJEDOR_CENTER,
@@ -1490,6 +1490,176 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     );
   }
 
+  const { activeTasks, rejectedTasks } = useMemo(() => {
+    const active: InterventionSummary[] = [];
+    const rejected: InterventionSummary[] = [];
+    for (const task of tasks) {
+      if (task.status === 'rejected') {
+        rejected.push(task);
+      } else {
+        active.push(task);
+      }
+    }
+    return { activeTasks: active, rejectedTasks: rejected };
+  }, [tasks]);
+
+  const renderTaskCard = (t: InterventionSummary) => {
+    const isActionable = ['planned', 'suspended', 'in_progress', 'rejected'].includes(
+      t.status
+    );
+    const isExpanded = previewTaskId === t.id;
+
+    return (
+      <div
+        key={t.id}
+        style={{
+          border: '1px solid #cbd5e1',
+          borderRadius: 12,
+          padding: 12,
+          background: t.status === 'suspended' ? '#fffbeb' : '#ffffff',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+          <div>
+            <strong style={{ fontSize: 15 }}>{t.title}</strong>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+              {t.road_name ? `Camino: ${t.road_name}` : 'Traza en mapa'} •{' '}
+              {t.execution_mode === 'linear' ? 'Lineal (GPS)' : 'Puntual (Foto/Punto)'}
+            </div>
+          </div>
+          <span
+            className={`pill-badge`}
+            style={{
+              background:
+                t.status === 'approved'
+                  ? '#dcfce7'
+                  : t.status === 'suspended'
+                    ? '#fef3c7'
+                    : t.status === 'rejected'
+                      ? '#fee2e2'
+                      : '#e0f2fe',
+              color:
+                t.status === 'approved'
+                  ? '#166534'
+                  : t.status === 'suspended'
+                    ? '#92400e'
+                    : t.status === 'rejected'
+                      ? '#991b1b'
+                      : '#075985',
+              fontSize: 11,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {INTERVENTION_STATUS_LABELS[t.status as InterventionStatus] || t.status}
+          </span>
+        </div>
+
+        {t.description && (
+          <p style={{ fontSize: 13, color: '#475569', margin: '6px 0' }}>{t.description}</p>
+        )}
+
+        {t.review_note && t.status === 'rejected' && (
+          <div className="alert-box error" style={{ fontSize: 12, padding: '6px 10px', margin: '6px 0' }}>
+            Observación Admin: {t.review_note}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0', fontSize: 12 }}>
+          {(t.work_types || []).map((w) => (
+            <span
+              key={w.id}
+              style={{
+                background: `${w.color}22`,
+                color: w.color,
+                padding: '2px 8px',
+                borderRadius: 6,
+                fontWeight: 600,
+              }}
+            >
+              <Wrench size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+              {w.name}
+            </span>
+          ))}
+          {(t.machines || []).map((m) => (
+            <span
+              key={m.id}
+              style={{
+                background: '#f1f5f9',
+                color: '#334155',
+                padding: '2px 8px',
+                borderRadius: 6,
+              }}
+            >
+              <Truck size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+              {m.name}
+            </span>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 12, color: '#475569', marginBottom: 8 }}>
+          {t.execution_mode === 'linear' && (
+            <>
+              {t.planned_length_m > 0 && (
+                <span>Planificado: {formatDistance(Number(t.planned_length_m))} • </span>
+              )}
+              <strong>
+                Trabajado ({t.sessions_count || 0} jornadas):{' '}
+                {formatDistance(Number(t.worked_length_m || 0))}
+              </strong>
+            </>
+          )}
+        </div>
+
+        {/* Mapa colapsable de la tarea */}
+        {(t.planned_geojson || t.worked_geojson) && (
+          <div style={{ marginBottom: 8 }}>
+            <button
+              type="button"
+              className="btn-outline"
+              style={{ width: '100%', fontSize: 12, padding: '6px' }}
+              onClick={() => setPreviewTaskId(isExpanded ? null : t.id)}
+            >
+              <MapPin size={14} /> {isExpanded ? 'Ocultar mapa del tramo' : 'Ver tramo en mapa'}
+            </button>
+            {isExpanded && (
+              <div
+                ref={previewContainerRef}
+                style={{
+                  width: '100%',
+                  height: 220,
+                  borderRadius: 8,
+                  marginTop: 6,
+                  overflow: 'hidden',
+                  border: '1px solid #cbd5e1',
+                }}
+              />
+            )}
+          </div>
+        )}
+
+        {isActionable && (
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ width: '100%', justifyContent: 'center' }}
+            onClick={() => startExecution(t)}
+          >
+            {t.execution_mode === 'linear' ? (
+              <>
+                <Navigation size={16} />{' '}
+                {t.status === 'suspended' ? 'Reanudar Trabajo con GPS' : 'Ejecutar Trabajo con GPS'}
+              </>
+            ) : (
+              <>
+                <MapPin size={16} /> Registrar Punto y Fotos
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   // ===========================================================================
   // RENDERIZADO: LISTA DE TAREAS DEL OPERARIO (FASE 11)
   // ===========================================================================
@@ -1591,162 +1761,39 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {tasks.map((t) => {
-              const isActionable = ['planned', 'suspended', 'in_progress', 'rejected'].includes(
-                t.status
-              );
-              const isExpanded = previewTaskId === t.id;
+            {activeTasks.length === 0 ? (
+              <p className="muted-text" style={{ margin: 0 }}>
+                No tenés órdenes pendientes ni aprobadas arriba.
+              </p>
+            ) : (
+              activeTasks.map(renderTaskCard)
+            )}
 
-              return (
-                <div
-                  key={t.id}
-                  style={{
-                    border: '1px solid #cbd5e1',
-                    borderRadius: 12,
-                    padding: 12,
-                    background: t.status === 'suspended' ? '#fffbeb' : '#ffffff',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                    <div>
-                      <strong style={{ fontSize: 15 }}>{t.title}</strong>
-                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                        {t.road_name ? `Camino: ${t.road_name}` : 'Traza en mapa'} •{' '}
-                        {t.execution_mode === 'linear' ? 'Lineal (GPS)' : 'Puntual (Foto/Punto)'}
-                      </div>
-                    </div>
-                    <span
-                      className={`pill-badge`}
-                      style={{
-                        background:
-                          t.status === 'approved'
-                            ? '#dcfce7'
-                            : t.status === 'suspended'
-                              ? '#fef3c7'
-                              : t.status === 'rejected'
-                                ? '#fee2e2'
-                                : '#e0f2fe',
-                        color:
-                          t.status === 'approved'
-                            ? '#166534'
-                            : t.status === 'suspended'
-                              ? '#92400e'
-                              : t.status === 'rejected'
-                                ? '#991b1b'
-                                : '#075985',
-                        fontSize: 11,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {INTERVENTION_STATUS_LABELS[t.status as InterventionStatus] || t.status}
-                    </span>
-                  </div>
-
-                  {t.description && (
-                    <p style={{ fontSize: 13, color: '#475569', margin: '6px 0' }}>{t.description}</p>
-                  )}
-
-                  {t.review_note && t.status === 'rejected' && (
-                    <div className="alert-box error" style={{ fontSize: 12, padding: '6px 10px', margin: '6px 0' }}>
-                      Observación Admin: {t.review_note}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0', fontSize: 12 }}>
-                    {(t.work_types || []).map((w) => (
-                      <span
-                        key={w.id}
-                        style={{
-                          background: `${w.color}22`,
-                          color: w.color,
-                          padding: '2px 8px',
-                          borderRadius: 6,
-                          fontWeight: 600,
-                        }}
-                      >
-                        <Wrench size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
-                        {w.name}
-                      </span>
-                    ))}
-                    {(t.machines || []).map((m) => (
-                      <span
-                        key={m.id}
-                        style={{
-                          background: '#f1f5f9',
-                          color: '#334155',
-                          padding: '2px 8px',
-                          borderRadius: 6,
-                        }}
-                      >
-                        <Truck size={11} style={{ verticalAlign: 'middle', marginRight: 3 }} />
-                        {m.name}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div style={{ fontSize: 12, color: '#475569', marginBottom: 8 }}>
-                    {t.execution_mode === 'linear' && (
-                      <>
-                        {t.planned_length_m > 0 && (
-                          <span>Planificado: {formatDistance(Number(t.planned_length_m))} • </span>
-                        )}
-                        <strong>
-                          Trabajado ({t.sessions_count || 0} jornadas):{' '}
-                          {formatDistance(Number(t.worked_length_m || 0))}
-                        </strong>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Mapa colapsable de la tarea */}
-                  {(t.planned_geojson || t.worked_geojson) && (
-                    <div style={{ marginBottom: 8 }}>
-                      <button
-                        type="button"
-                        className="btn-outline"
-                        style={{ width: '100%', fontSize: 12, padding: '6px' }}
-                        onClick={() => setPreviewTaskId(isExpanded ? null : t.id)}
-                      >
-                        <MapPin size={14} /> {isExpanded ? 'Ocultar mapa del tramo' : 'Ver tramo en mapa'}
-                      </button>
-                      {isExpanded && (
-                        <div
-                          ref={previewContainerRef}
-                          style={{
-                            width: '100%',
-                            height: 220,
-                            borderRadius: 8,
-                            marginTop: 6,
-                            overflow: 'hidden',
-                            border: '1px solid #cbd5e1',
-                          }}
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  {isActionable && (
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      style={{ width: '100%', justifyContent: 'center' }}
-                      onClick={() => startExecution(t)}
-                    >
-                      {t.execution_mode === 'linear' ? (
-                        <>
-                          <Navigation size={16} />{' '}
-                          {t.status === 'suspended' ? 'Reanudar Trabajo con GPS' : 'Ejecutar Trabajo con GPS'}
-                        </>
-                      ) : (
-                        <>
-                          <MapPin size={16} /> Registrar Punto y Fotos
-                        </>
-                      )}
-                    </button>
-                  )}
+            {rejectedTasks.length > 0 && (
+              <div
+                style={{
+                  marginTop: 8,
+                  paddingTop: 12,
+                  borderTop: '1px dashed #cbd5e1',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong style={{ fontSize: 13, color: '#991b1b' }}>
+                    Rechazadas (revisar)
+                  </strong>
+                  <span
+                    className="pill-badge"
+                    style={{ background: '#fee2e2', color: '#991b1b', fontSize: 11 }}
+                  >
+                    {rejectedTasks.length}
+                  </span>
                 </div>
-              );
-            })}
+                {rejectedTasks.map(renderTaskCard)}
+              </div>
+            )}
           </div>
         )}
       </div>
