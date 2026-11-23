@@ -44,6 +44,7 @@ import {
   cleanTrackLoopsAndJitter,
 } from '../lib/geo';
 import { getMapStyle } from '../lib/mapStyle';
+import { OperatorLiveMap } from './OperatorLiveMap';
 import { compressClaimPhoto } from '../lib/imageCompression';
 import {
   getCachedOperatorTasks,
@@ -1139,6 +1140,22 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     }
   };
 
+  const activeTaskOverlay = useMemo(() => {
+    if (!activeWork?.interventionId) {
+      return { planned: null, worked: null };
+    }
+    const matched = tasks.find((t) => t.id === activeWork.interventionId);
+    return {
+      planned: matched?.planned_geojson || null,
+      worked: matched?.worked_geojson || null,
+    };
+  }, [activeWork?.interventionId, tasks]);
+
+  const liveMapCoords = useMemo(
+    () => points.map((p) => [p.lon, p.lat] as [number, number]),
+    [points]
+  );
+
   // ===========================================================================
   // RENDERIZADO: MODO EJECUCIÓN EN CAMPO (ACTIVO)
   // ===========================================================================
@@ -1189,6 +1206,24 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
               <p className="muted-text" style={{ fontSize: 13 }}>
                 Recordá activar la grabación al llegar al tramo real de trabajo (sin grabar el traslado desde el corralón). Las pasadas repetidas ida y vuelta se consolidan automáticamente sin duplicar km.
               </p>
+
+              <div style={{ margin: '10px 0' }}>
+                <OperatorLiveMap
+                  coordinates={liveMapCoords}
+                  plannedGeojson={activeTaskOverlay.planned}
+                  workedGeojson={activeTaskOverlay.worked}
+                  height="250px"
+                />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 11, color: '#475569', marginTop: 6 }}>
+                  {activeTaskOverlay.planned && (
+                    <span>🟠 Punteado: tramo asignado</span>
+                  )}
+                  {activeTaskOverlay.worked && (
+                    <span>🟢 Verde: ya trabajado</span>
+                  )}
+                  <span>🔵 Azul: tu recorrido en vivo</span>
+                </div>
+              </div>
 
               <div className="metrics-grid">
                 <div className="metric-box">
