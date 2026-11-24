@@ -1,5 +1,5 @@
-const CACHE_NAME = 'caminos-tejedor-pwa-v1';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+const CACHE_NAME = 'caminos-tejedor-pwa-v2';
+const APP_SHELL = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
