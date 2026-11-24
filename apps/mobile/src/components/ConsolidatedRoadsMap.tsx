@@ -9,6 +9,19 @@ import { supabase } from '../lib/supabase';
 import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/geo';
 
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch]);
+}
+
 interface ConsolidatedSegment {
   segment_id: string;
   road_id: string;
@@ -159,9 +172,9 @@ export const ConsolidatedRoadsMap: React.FC = () => {
           .setLngLat(e.lngLat)
           .setHTML(
             `<div style="font-size:13px;padding:4px">
-              <strong>${normalized_name}</strong><br/>
-              Categoría: <b>${label}</b><br/>
-              Longitud: ${formatDistance(Number(total_length_m))}
+              <strong>${escapeHtml(normalized_name)}</strong><br/>
+              Categoría: <b>${escapeHtml(label)}</b><br/>
+              Longitud: ${escapeHtml(formatDistance(Number(total_length_m)))}
             </div>`
           )
           .addTo(map);
