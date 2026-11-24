@@ -15,6 +15,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { getMapStyle } from '../lib/mapStyle';
 import { formatDistance } from '../lib/format';
+import { escapeHtml } from '../lib/htmlEscape';
 import { syncPendingRoadElevations, type LowZoneMapItem } from '../lib/elevationDem';
 import {
   WATER_OVERLAY_LAYER_ID,
@@ -557,11 +558,11 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
         popupNode.innerHTML = `
-          <strong>🚧 ${p.title}</strong>
-          <div>Estado: <b>${stLabel}</b></div>
-          ${p.work_types_text ? `<div>Obra: ${p.work_types_text}</div>` : ''}
-          ${p.machines_text ? `<div>Equipo: ${p.machines_text}</div>` : ''}
-          <div>${lenStr}</div>
+          <strong>🚧 ${escapeHtml(p.title)}</strong>
+          <div>Estado: <b>${escapeHtml(stLabel)}</b></div>
+          ${p.work_types_text ? `<div>Obra: ${escapeHtml(p.work_types_text)}</div>` : ''}
+          ${p.machines_text ? `<div>Equipo: ${escapeHtml(p.machines_text)}</div>` : ''}
+          <div>${escapeHtml(lenStr)}</div>
         `;
         new maplibregl.Popup({ closeButton: true })
           .setLngLat(e.lngLat)
@@ -724,10 +725,10 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
         popupNode.innerHTML = `
-          <strong>${normalized_name}</strong>
-          <div>Jerarquía: <b>${classLabel}</b></div>
-          <div>Longitud: ${formatDistance(Number(total_length_m))}</div>
-          <div>Recorridos aprobados: <b>${approved_trips_count}</b></div>
+          <strong>${escapeHtml(normalized_name)}</strong>
+          <div>Jerarquía: <b>${escapeHtml(classLabel)}</b></div>
+          <div>Longitud: ${escapeHtml(formatDistance(Number(total_length_m)))}</div>
+          <div>Recorridos aprobados: <b>${escapeHtml(approved_trips_count)}</b></div>
           ${elevHtml}
         `;
 
@@ -909,9 +910,9 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
         popupNode.innerHTML = `
-          <strong>Reclamo: ${title}</strong>
-          <div>Categoría: <b>${category_name}</b></div>
-          <div>Estado: <b>${statusLabel}</b> • Prioridad: <b>${prioLabel}</b></div>
+          <strong>Reclamo: ${escapeHtml(title)}</strong>
+          <div>Categoría: <b>${escapeHtml(category_name)}</b></div>
+          <div>Estado: <b>${escapeHtml(statusLabel)}</b> • Prioridad: <b>${escapeHtml(prioLabel)}</b></div>
         `;
 
         if (onSelectClaimId) {
@@ -1005,9 +1006,9 @@ export const AdminMap: React.FC<AdminMapProps> = ({
         const popupNode = document.createElement('div');
         popupNode.className = 'map-popup-box';
         popupNode.innerHTML = `
-          <strong>Recorrido: ${original_name}</strong>
+          <strong>Recorrido: ${escapeHtml(original_name)}</strong>
           <div>Estado: <b>${status === 'approved' ? 'Aprobado' : 'Pendiente'}</b></div>
-          <div>Distancia: ${formatDistance(Number(distance_m))}</div>
+          <div>Distancia: ${escapeHtml(formatDistance(Number(distance_m)))}</div>
         `;
         if (onSelectTripId) {
           const btn = document.createElement('button');
