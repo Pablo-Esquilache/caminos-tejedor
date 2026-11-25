@@ -18,6 +18,7 @@ import {
   Camera,
   CheckCircle2,
   Clock,
+  Image as ImageIcon,
   MapPin,
   Navigation,
   Pause,
@@ -154,8 +155,20 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   >([]);
   const [compressingPhoto, setCompressingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [photoDiag, setPhotoDiag] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [submittingWork, setSubmittingWork] = useState(false);
+
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingPhotoPickRef = useRef<{
+    source: 'camera' | 'gallery';
+    openedAt: number;
+    changeFired: boolean;
+  } | null>(null);
+  const photoReturnTimerRef = useRef<number | null>(null);
+  const photosLengthRef = useRef(photos.length);
+  photosLengthRef.current = photos.length;
 
   const showBanner = (
     msg: string,
@@ -1107,15 +1120,42 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     }
   };
 
-  const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const processSelectedPhotoFiles = async (
+    files: FileList | null,
+    inputEl: HTMLInputElement | null,
+    origin: 'change' | 'focus-rescue',
+    source: 'camera' | 'gallery'
+  ) => {
+    if (photoReturnTimerRef.current !== null) {
+      window.clearTimeout(photoReturnTimerRef.current);
+      photoReturnTimerRef.current = null;
+    }
+    if (pendingPhotoPickRef.current) {
+      pendingPhotoPickRef.current.changeFired = true;
+      pendingPhotoPickRef.current = null;
+    }
+
+    const fileCount = files?.length ?? 0;
+    const srcLabel = source === 'camera' ? 'cámara' : 'galería';
+    setPhotoDiag(
+      `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | handlePhotoPick=sí`
+    );
+
+    if (!files || fileCount === 0) {
+      setPhotoError(
+        `No llegó ningún archivo desde ${srcLabel}. Probá de nuevo o usá "Elegir de galería".`
+      );
+      if (inputEl) inputEl.value = '';
+      return;
+    }
+
     setGpsError(null);
     setPhotoError(null);
     setCompressingPhoto(true);
     try {
+      const remaining = Math.max(0, 3 - photosLengthRef.current);
       const added: Array<{ photoBlob: Blob; thumbBlob: Blob; previewUrl: string }> = [];
-      for (let i = 0; i < Math.min(files.length, 3 - photos.length); i++) {
+      for (let i = 0; i < Math.min(fileCount, remaining); i++) {
         const comp = await compressClaimPhoto(files[i]);
         added.push({
           photoBlob: comp.photoBlob,
@@ -1124,15 +1164,115 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
         });
       }
       setPhotos((prev) => [...prev, ...added]);
+      setPhotoDiag(
+        `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | adjuntadas=+${added.length}`
+      );
     } catch (err: any) {
       console.error('Error procesando fotografía:', err);
       const errTxt = `No se pudo procesar la fotografía: ${err?.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`;
       setPhotoError(errTxt);
+      setPhotoDiag(
+        `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | error compresión`
+      );
     } finally {
       setCompressingPhoto(false);
-      e.target.value = '';
+      if (inputEl) inputEl.value = '';
     }
   };
+
+  // Rescate y aviso al volver de la cámara/galería si Android pierde el evento change
+  useEffect(() => {
+    const checkReturnedPhoto = () => {
+      const pending = pendingPhotoPickRef.current;
+      if (!pending || pending.changeFired) return;
+
+      if (photoReturnTimerRef.current !== null) {
+        window.clearTimeout(photoReturnTimerRef.current);
+      }
+
+      const inspectInput = (isFinalCheck: boolean) => {
+        const currentPending = pendingPhotoPickRef.current;
+        if (!currentPending || currentPending.changeFired) return;
+
+        const targetInput =
+          currentPending.source === 'camera' ? cameraInputRef.current : galleryInputRef.current;
+        const count = targetInput?.files?.length ?? 0;
+
+        if (count > 0 && targetInput?.files) {
+          void processSelectedPhotoFiles(
+            targetInput.files,
+            targetInput,
+            'focus-rescue',
+            currentPending.source
+          );
+          return;
+        }
+
+        if (isFinalCheck) {
+          const srcLabel = currentPending.source === 'camera' ? 'cámara' : 'galería';
+          pendingPhotoPickRef.current = null;
+          photoReturnTimerRef.current = null;
+          setPhotoDiag(
+            `Diagnóstico foto: fuente=${srcLabel} | change=no | archivos al volver=0 | handlePhotoPick=no`
+          );
+          setPhotoError(
+            'No llegó la foto de la cámara. Probá de nuevo o usá "Elegir de galería".'
+          );
+        } else {
+          photoReturnTimerRef.current = window.setTimeout(() => inspectInput(true), 2000);
+        }
+      };
+
+      photoReturnTimerRef.current = window.setTimeout(() => inspectInput(false), 600);
+    };
+
+    const onFocus = () => checkReturnedPhoto();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') checkReturnedPhoto();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    let capHandle: { remove: () => Promise<void> } | null = null;
+    CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) checkReturnedPhoto();
+    })
+      .then((h) => {
+        capHandle = h;
+      })
+      .catch(() => {});
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (capHandle) capHandle.remove().catch(() => {});
+      if (photoReturnTimerRef.current !== null) {
+        window.clearTimeout(photoReturnTimerRef.current);
+        photoReturnTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handlePhotoInputClick = (source: 'camera' | 'gallery') => {
+    if (photoReturnTimerRef.current !== null) {
+      window.clearTimeout(photoReturnTimerRef.current);
+      photoReturnTimerRef.current = null;
+    }
+    pendingPhotoPickRef.current = {
+      source,
+      openedAt: Date.now(),
+      changeFired: false,
+    };
+    setPhotoError(null);
+    setPhotoDiag(
+      `Diagnóstico foto: abriendo ${source === 'camera' ? 'cámara' : 'galería'}...`
+    );
+  };
+
+  const handlePhotoPick =
+    (source: 'camera' | 'gallery') => async (e: React.ChangeEvent<HTMLInputElement>) => {
+      await processSelectedPhotoFiles(e.target.files, e.target, 'change', source);
+    };
 
   const submitCurrentWork = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1149,6 +1289,12 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     if (activeWork.executionMode === 'punctual' && (punctualLat === null || punctualLon === null)) {
       setGpsError('Necesitás capturar las coordenadas GPS del punto trabajado.');
       return;
+    }
+    if (photos.length === 0) {
+      const sendWithoutPhotos = window.confirm(
+        'No adjuntaste fotografías del trabajo. ¿Querés enviar igual sin fotos?'
+      );
+      if (!sendWithoutPhotos) return;
     }
 
     setSubmittingWork(true);
@@ -1549,29 +1695,57 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                     </div>
                   ))}
                   {photos.length < 3 && (
-                    <label
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: '10px 14px',
-                        borderRadius: 8,
-                        border: '1px dashed #64748b',
-                        cursor: 'pointer',
-                        fontSize: 13,
-                      }}
-                    >
-                      <Camera size={16} />{' '}
-                      {compressingPhoto ? 'Procesando foto...' : 'Sacar / Elegir Foto'}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        disabled={compressingPhoto}
-                        style={{ display: 'none' }}
-                        onChange={handlePhotoPick}
-                      />
-                    </label>
+                    <>
+                      <label
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          border: '1px dashed #64748b',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                        }}
+                      >
+                        <Camera size={16} />{' '}
+                        {compressingPhoto ? 'Procesando foto...' : 'Sacar foto'}
+                        <input
+                          ref={cameraInputRef}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          disabled={compressingPhoto}
+                          style={{ display: 'none' }}
+                          onClick={() => handlePhotoInputClick('camera')}
+                          onChange={handlePhotoPick('camera')}
+                        />
+                      </label>
+                      <label
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          border: '1px dashed #64748b',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                        }}
+                      >
+                        <ImageIcon size={16} />{' '}
+                        {compressingPhoto ? 'Procesando foto...' : 'Elegir de galería'}
+                        <input
+                          ref={galleryInputRef}
+                          type="file"
+                          accept="image/*"
+                          disabled={compressingPhoto}
+                          style={{ display: 'none' }}
+                          onClick={() => handlePhotoInputClick('gallery')}
+                          onChange={handlePhotoPick('gallery')}
+                        />
+                      </label>
+                    </>
                   )}
                 </div>
                 {photoError && (
@@ -1586,6 +1760,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                     >
                       ×
                     </button>
+                  </div>
+                )}
+                {photoDiag && (
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
+                    {photoDiag}
                   </div>
                 )}
               </div>
