@@ -312,7 +312,8 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
     setCompressing(true);
     setFormError(null);
@@ -322,6 +323,7 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
     } catch (err: any) {
       setFormError(err?.message || 'No se pudo procesar la imagen seleccionada.');
     } finally {
+      input.value = '';
       setCompressing(false);
     }
   };
@@ -616,16 +618,34 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
           <small className="muted-text">
             Podés tocar el mapa o arrastrar el marcador rojo hasta el punto exacto del camino.
           </small>
-          <ClaimLocationMap
-            lat={lat}
-            lon={lon}
-            editable
-            onChangeLocation={(newLat, newLon) => {
-              setLat(newLat);
-              setLon(newLon);
-            }}
-            height="210px"
-          />
+          {compressing ? (
+            <div
+              style={{
+                height: '210px',
+                borderRadius: 10,
+                border: '1px solid #cbd5e1',
+                background: '#f8fafc',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#475569',
+                fontSize: 13,
+              }}
+            >
+              Comprimiendo fotografía...
+            </div>
+          ) : (
+            <ClaimLocationMap
+              lat={lat}
+              lon={lon}
+              editable
+              onChangeLocation={(newLat, newLon) => {
+                setLat(newLat);
+                setLon(newLon);
+              }}
+              height="210px"
+            />
+          )}
         </div>
 
         {/* Fotografía con compresión en el cliente */}
@@ -635,11 +655,22 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
             <div className="photo-upload-actions">
               <label className="btn-secondary photo-upload-label">
                 <Camera size={18} />
-                <span>{compressing ? 'Comprimiendo...' : 'Sacar foto o elegir imagen'}</span>
+                <span>{compressing ? 'Comprimiendo...' : 'Sacar foto'}</span>
                 <input
                   type="file"
                   accept="image/*"
                   capture="environment"
+                  onChange={handleFileChange}
+                  disabled={compressing}
+                  hidden
+                />
+              </label>
+              <label className="btn-outline photo-upload-label">
+                <ImageIcon size={18} />
+                <span>{compressing ? 'Comprimiendo...' : 'Elegir de galería'}</span>
+                <input
+                  type="file"
+                  accept="image/*"
                   onChange={handleFileChange}
                   disabled={compressing}
                   hidden
