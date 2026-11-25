@@ -106,8 +106,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   // Vista de tarea seleccionada en mapa de detalle
   const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
   const [previewCurrentLoc, setPreviewCurrentLoc] = useState<[number, number] | null>(null);
+  const [previewLocNeedsPerm, setPreviewLocNeedsPerm] = useState(false);
   const previewMapRef = useRef<maplibregl.Map | null>(null);
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const previewBoundsRef = useRef<maplibregl.LngLatBounds | null>(null);
+  const previewDidFitUserRef = useRef<boolean>(false);
 
   // Flujo de ejecución en campo (Lineal GPS o Puntual o Espontáneo)
   const [activeWork, setActiveWork] = useState<{
@@ -455,20 +458,72 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       }
 
       if (hasCoords && !bounds.isEmpty()) {
+        previewBoundsRef.current = bounds;
         map.fitBounds(bounds, { padding: 40, maxZoom: 15 });
+      } else {
+        previewBoundsRef.current = null;
       }
     });
 
+    previewDidFitUserRef.current = false;
+    previewBoundsRef.current = null;
     previewMapRef.current = map;
     return () => {
       map.remove();
       previewMapRef.current = null;
+      previewBoundsRef.current = null;
+      previewDidFitUserRef.current = false;
     };
   }, [previewTaskId]);
+
+  const fetchPreviewPosition = async (): Promise<[number, number] | null> => {
+    try {
+      const pos = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 60000,
+      });
+      if (pos?.coords) {
+        return [pos.coords.longitude, pos.coords.latitude];
+      }
+    } catch {
+      // Reintentar una vez con alta precisión si falló el primer fix
+    }
+    try {
+      const pos = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      });
+      if (pos?.coords) {
+        return [pos.coords.longitude, pos.coords.latitude];
+      }
+    } catch {
+      // Fallback silencioso si no hay señal GPS
+    }
+    return null;
+  };
+
+  const handleRequestPreviewLocation = async () => {
+    try {
+      const perm = await Geolocation.requestPermissions();
+      if (perm.location !== 'granted' && perm.coarseLocation !== 'granted') {
+        return;
+      }
+      setPreviewLocNeedsPerm(false);
+      const coords = await fetchPreviewPosition();
+      if (coords) {
+        setPreviewCurrentLoc(coords);
+      }
+    } catch {
+      // Ignorar si el usuario cancela o no hay soporte
+    }
+  };
 
   // Obtener ubicación actual en silencio para la vista previa (sin pedir permisos ni recrear mapa)
   useEffect(() => {
     setPreviewCurrentLoc(null);
+    setPreviewLocNeedsPerm(false);
     if (!previewTaskId) {
       return;
     }
@@ -478,15 +533,18 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       try {
         const perm = await Geolocation.checkPermissions();
         if (perm.location !== 'granted' && perm.coarseLocation !== 'granted') {
+          if (!cancelled) {
+            const isPrompt =
+              perm.location === 'prompt' ||
+              perm.location === 'prompt-with-rationale' ||
+              perm.coarseLocation === 'prompt';
+            setPreviewLocNeedsPerm(isPrompt);
+          }
           return;
         }
-        const pos = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: false,
-          timeout: 4000,
-          maximumAge: 60000,
-        });
-        if (!cancelled && pos?.coords) {
-          setPreviewCurrentLoc([pos.coords.longitude, pos.coords.latitude]);
+        const coords = await fetchPreviewPosition();
+        if (!cancelled && coords) {
+          setPreviewCurrentLoc(coords);
         }
       } catch {
         // Fallback silencioso si no hay permiso o señal GPS
@@ -516,44 +574,71 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
         ],
       };
 
-      const existing = map.getSource('op-preview-current-loc') as maplibregl.GeoJSONSource | undefined;
-      if (existing) {
-        existing.setData(featureData as any);
-        return;
-      }
+      try {
+        const existing = map.getSource('op-preview-current-loc') as maplibregl.GeoJSONSource | undefined;
+        if (existing) {
+          existing.setData(featureData as any);
+        } else {
+          map.addSource('op-preview-current-loc', {
+            type: 'geojson',
+            data: featureData as any,
+          });
+          map.addLayer({
+            id: 'op-preview-current-halo',
+            type: 'circle',
+            source: 'op-preview-current-loc',
+            paint: {
+              'circle-radius': 13,
+              'circle-color': '#2563eb',
+              'circle-opacity': 0.22,
+            },
+          });
+          map.addLayer({
+            id: 'op-preview-current-dot',
+            type: 'circle',
+            source: 'op-preview-current-loc',
+            paint: {
+              'circle-radius': 7,
+              'circle-color': '#2563eb',
+              'circle-stroke-width': 2.5,
+              'circle-stroke-color': '#ffffff',
+            },
+          });
+        }
 
-      map.addSource('op-preview-current-loc', {
-        type: 'geojson',
-        data: featureData as any,
-      });
-      map.addLayer({
-        id: 'op-preview-current-halo',
-        type: 'circle',
-        source: 'op-preview-current-loc',
-        paint: {
-          'circle-radius': 13,
-          'circle-color': '#2563eb',
-          'circle-opacity': 0.22,
-        },
-      });
-      map.addLayer({
-        id: 'op-preview-current-dot',
-        type: 'circle',
-        source: 'op-preview-current-loc',
-        paint: {
-          'circle-radius': 7,
-          'circle-color': '#2563eb',
-          'circle-stroke-width': 2.5,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
+        // Encuadrar obra + ubicación una sola vez si el operario está cerca (< 2 km)
+        if (!previewDidFitUserRef.current && previewBoundsRef.current && !previewBoundsRef.current.isEmpty()) {
+          previewDidFitUserRef.current = true;
+          const center = previewBoundsRef.current.getCenter();
+          const distM = calculateDistanceMeters(
+            center.lat,
+            center.lng,
+            previewCurrentLoc[1],
+            previewCurrentLoc[0]
+          );
+          if (distM < 2000) {
+            const combined = new maplibregl.LngLatBounds(
+              previewBoundsRef.current.getSouthWest(),
+              previewBoundsRef.current.getNorthEast()
+            );
+            combined.extend(previewCurrentLoc);
+            map.fitBounds(combined, { padding: 48, maxZoom: 16 });
+          }
+        }
+      } catch {
+        // Ignorar si el mapa se desmontó mientras se dibujaba el marcador
+      }
     };
 
-    if (map.isStyleLoaded()) {
+    if (map.loaded() || map.isStyleLoaded()) {
       drawMarker();
-    } else {
-      map.once('load', drawMarker);
+      return;
     }
+
+    map.once('idle', drawMarker);
+    return () => {
+      map.off('idle', drawMarker);
+    };
   }, [previewTaskId, previewCurrentLoc]);
 
   const stopWebAndFallbackGps = () => {
@@ -1747,17 +1832,29 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
               <MapPin size={14} /> {isExpanded ? 'Ocultar mapa del tramo' : 'Ver tramo en mapa'}
             </button>
             {isExpanded && (
-              <div
-                ref={previewContainerRef}
-                style={{
-                  width: '100%',
-                  height: 220,
-                  borderRadius: 8,
-                  marginTop: 6,
-                  overflow: 'hidden',
-                  border: '1px solid #cbd5e1',
-                }}
-              />
+              <>
+                <div
+                  ref={previewContainerRef}
+                  style={{
+                    width: '100%',
+                    height: 220,
+                    borderRadius: 8,
+                    marginTop: 6,
+                    overflow: 'hidden',
+                    border: '1px solid #cbd5e1',
+                  }}
+                />
+                {previewLocNeedsPerm && (
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    style={{ width: '100%', fontSize: 12, padding: '6px', marginTop: 6 }}
+                    onClick={handleRequestPreviewLocation}
+                  >
+                    <Navigation size={13} /> Ver mi ubicación
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
