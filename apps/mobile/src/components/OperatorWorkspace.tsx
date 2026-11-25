@@ -167,6 +167,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     changeFired: boolean;
   } | null>(null);
   const photoReturnTimerRef = useRef<number | null>(null);
+  const photoProcessingRef = useRef(false);
+  const lastProcessedFileSigRef = useRef<{ sig: string; at: number } | null>(null);
   const photosLengthRef = useRef(photos.length);
   photosLengthRef.current = photos.length;
 
@@ -1126,6 +1128,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     origin: 'change' | 'focus-rescue',
     source: 'camera' | 'gallery'
   ) => {
+    if (photoProcessingRef.current) return;
+
     if (photoReturnTimerRef.current !== null) {
       window.clearTimeout(photoReturnTimerRef.current);
       photoReturnTimerRef.current = null;
@@ -1137,17 +1141,32 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
     const fileCount = files?.length ?? 0;
     const srcLabel = source === 'camera' ? 'cámara' : 'galería';
-    setPhotoDiag(
-      `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | handlePhotoPick=sí`
-    );
 
     if (!files || fileCount === 0) {
+      setPhotoDiag(
+        `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=0 | handlePhotoPick=sí`
+      );
       setPhotoError(
         `No llegó ningún archivo desde ${srcLabel}. Probá de nuevo o usá "Elegir de galería".`
       );
       if (inputEl) inputEl.value = '';
       return;
     }
+
+    // Guarda contra foto duplicada (rescate + evento change tardío del mismo archivo)
+    const firstFile = files[0];
+    const batchSig = `${source}:${fileCount}:${firstFile.name}:${firstFile.size}:${firstFile.lastModified}`;
+    const lastSig = lastProcessedFileSigRef.current;
+    if (lastSig && lastSig.sig === batchSig && Date.now() - lastSig.at < 15000) {
+      if (inputEl) inputEl.value = '';
+      return;
+    }
+
+    photoProcessingRef.current = true;
+    lastProcessedFileSigRef.current = { sig: batchSig, at: Date.now() };
+    setPhotoDiag(
+      `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | handlePhotoPick=sí`
+    );
 
     setGpsError(null);
     setPhotoError(null);
@@ -1175,6 +1194,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
         `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | error compresión`
       );
     } finally {
+      photoProcessingRef.current = false;
       setCompressingPhoto(false);
       if (inputEl) inputEl.value = '';
     }
@@ -1182,9 +1202,16 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
 
   // Rescate y aviso al volver de la cámara/galería si Android pierde el evento change
   useEffect(() => {
+    const PENDING_PHOTO_TTL_MS = 5 * 60 * 1000; // Vencimiento de la marca pendiente (5 minutos)
+
     const checkReturnedPhoto = () => {
       const pending = pendingPhotoPickRef.current;
       if (!pending || pending.changeFired) return;
+
+      if (Date.now() - pending.openedAt > PENDING_PHOTO_TTL_MS) {
+        pendingPhotoPickRef.current = null;
+        return;
+      }
 
       if (photoReturnTimerRef.current !== null) {
         window.clearTimeout(photoReturnTimerRef.current);
@@ -1193,6 +1220,12 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       const inspectInput = (isFinalCheck: boolean) => {
         const currentPending = pendingPhotoPickRef.current;
         if (!currentPending || currentPending.changeFired) return;
+
+        if (Date.now() - currentPending.openedAt > PENDING_PHOTO_TTL_MS) {
+          pendingPhotoPickRef.current = null;
+          photoReturnTimerRef.current = null;
+          return;
+        }
 
         const targetInput =
           currentPending.source === 'camera' ? cameraInputRef.current : galleryInputRef.current;
@@ -1290,7 +1323,8 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
       setGpsError('Necesitás capturar las coordenadas GPS del punto trabajado.');
       return;
     }
-    if (photos.length === 0) {
+    const effectiveAction = activeWork.executionMode === 'punctual' ? 'submit' : finishAction;
+    if (effectiveAction === 'submit' && photos.length === 0) {
       const sendWithoutPhotos = window.confirm(
         'No adjuntaste fotografías del trabajo. ¿Querés enviar igual sin fotos?'
       );
