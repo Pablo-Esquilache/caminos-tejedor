@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, MapPin, Plus, Sparkles, X } from 'lucide-react';
+import { Camera, Image as ImageIcon, MapPin, Plus, Sparkles, X } from 'lucide-react';
 import { CARLOS_TEJEDOR_CENTER, type ClaimCategory, type ClaimPriority } from '@shared';
 import {
   compressClaimPhoto,
@@ -27,19 +27,25 @@ export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
   const [lat, setLat] = useState<number>(CARLOS_TEJEDOR_CENTER.latitude - 0.004);
   const [lon, setLon] = useState<number>(CARLOS_TEJEDOR_CENTER.longitude - 0.008);
   const [compressedPhoto, setCompressedPhoto] = useState<CompressedPhotoResult | null>(null);
+  const [compressing, setCompressing] = useState(false);
   const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
+    setCompressing(true);
+    setErrorMsg(null);
     try {
-      setErrorMsg(null);
       const res = await compressClaimPhoto(file);
       setCompressedPhoto(res);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Error al procesar la imagen.');
+    } finally {
+      input.value = '';
+      setCompressing(false);
     }
   };
 
@@ -320,16 +326,51 @@ export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
               <Camera size={15} style={{ verticalAlign: 'middle' }} /> Fotografía del reclamo
             </strong>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleFileChange}
-              />
+              <label
+                className="btn-outline"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: compressing || submitting ? 'not-allowed' : 'pointer',
+                  opacity: compressing || submitting ? 0.6 : 1,
+                }}
+              >
+                <Camera size={15} /> {compressing ? 'Comprimiendo...' : 'Sacar foto'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileChange}
+                  disabled={compressing || submitting}
+                  hidden
+                />
+              </label>
+              <label
+                className="btn-outline"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: compressing || submitting ? 'not-allowed' : 'pointer',
+                  opacity: compressing || submitting ? 0.6 : 1,
+                }}
+              >
+                <ImageIcon size={15} />{' '}
+                {compressing ? 'Comprimiendo...' : 'Elegir archivo / galería'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  disabled={compressing || submitting}
+                  hidden
+                />
+              </label>
               <button
                 type="button"
                 className="btn-outline"
                 onClick={handleGenerateSamplePhoto}
+                disabled={compressing || submitting}
               >
                 <Sparkles size={15} /> Generar foto de prueba (PC)
               </button>
@@ -358,8 +399,12 @@ export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
             >
               Cancelar
             </button>
-            <button type="submit" className="btn-approve" disabled={submitting}>
-              {submitting ? 'Guardando reclamo...' : 'Confirmar y Generar Reclamo'}
+            <button type="submit" className="btn-approve" disabled={submitting || compressing}>
+              {submitting
+                ? 'Guardando reclamo...'
+                : compressing
+                  ? 'Comprimiendo foto...'
+                  : 'Confirmar y Generar Reclamo'}
             </button>
           </div>
         </form>
