@@ -665,7 +665,7 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
                   hidden
                 />
               </label>
-              <label className="btn-outline photo-upload-label">
+              <label className="btn-secondary photo-upload-label">
                 <ImageIcon size={18} />
                 <span>{compressing ? 'Comprimiendo...' : 'Elegir de galería'}</span>
                 <input
