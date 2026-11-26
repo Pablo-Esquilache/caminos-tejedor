@@ -55,6 +55,7 @@ export interface PendingClaimOutboxItem {
   attempts: number;
   last_error: string | null;
   created_at: string;
+  is_public_alert?: boolean;
 }
 
 export interface PendingInterventionOutboxItem {

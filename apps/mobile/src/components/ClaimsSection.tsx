@@ -53,7 +53,8 @@ interface ClaimsSectionProps {
 
 export async function syncSingleClaimOutboxItem(
   userId: string,
-  item: PendingClaimOutboxItem
+  item: PendingClaimOutboxItem,
+  onAlertReason?: (reason: string) => void
 ): Promise<boolean> {
   try {
     let storagePath = item.uploaded_storage_path;
@@ -84,7 +85,7 @@ export async function syncSingleClaimOutboxItem(
       }
     }
 
-    const { error: rpcError } = await supabase.rpc('submit_claim_with_photo', {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('submit_claim_with_photo', {
       p_claim_id: item.id,
       p_title: item.title,
       p_description: item.description,
@@ -94,9 +95,14 @@ export async function syncSingleClaimOutboxItem(
       p_storage_path: storagePath,
       p_thumb_path: thumbPath,
       p_created_at: item.created_at,
+      p_is_public_alert: item.is_public_alert === true,
     });
 
     if (rpcError) throw rpcError;
+
+    if (rpcData && rpcData.alert_published === false && rpcData.alert_reason && onAlertReason) {
+      onAlertReason(String(rpcData.alert_reason));
+    }
 
     await removeClaimFromOutbox(item.id);
     return true;
@@ -136,6 +142,9 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
   const [locLoading, setLocLoading] = useState(false);
   const [compressedPhoto, setCompressedPhoto] = useState<CompressedPhotoResult | null>(null);
   const [compressing, setCompressing] = useState(false);
+  const [isPublicAlert, setIsPublicAlert] = useState(false);
+  const [publishedAlertIds, setPublishedAlertIds] = useState<Set<string>>(new Set());
+  const [unpublishingId, setUnpublishingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -241,6 +250,11 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
             setThumbSignedUrls((prev) => ({ ...prev, ...nextMap }));
           }
         }
+      }
+
+      const { data: pubIds, error: pubErr } = await supabase.rpc('get_my_published_alert_ids');
+      if (!pubErr && Array.isArray(pubIds)) {
+        setPublishedAlertIds(new Set(pubIds.map((x: unknown) => String(x))));
       }
     }
     setLoadingList(false);
@@ -383,6 +397,7 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
       attempts: 0,
       last_error: null,
       created_at: nowIso,
+      is_public_alert: isPublicAlert,
     };
 
     // 1. Guardar primero en IndexedDB para no perder el reclamo ni la foto si se corta la señal
@@ -390,28 +405,72 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
     onOutboxChange();
 
     // 2. Si hay conexión, subir fotos comprimidas al bucket privado y crear reclamo en el acto
+    let alertFallbackReason: string | null = null;
     if (navigator.onLine) {
-      const ok = await syncSingleClaimOutboxItem(userId, outboxItem);
+      const ok = await syncSingleClaimOutboxItem(userId, outboxItem, (reason) => {
+        alertFallbackReason = reason;
+      });
       onOutboxChange();
       if (ok) {
-        onNotifyToast('¡Reclamo enviado correctamente! Quedó registrado con estado "Recibido".');
+        if (alertFallbackReason) {
+          onNotifyToast(alertFallbackReason);
+        } else if (isPublicAlert) {
+          onNotifyToast('¡Reclamo enviado y publicado como alerta en el mapa de vecinos!');
+        } else {
+          onNotifyToast('¡Reclamo enviado correctamente! Quedó registrado con estado "Recibido".');
+        }
       } else {
         onNotifyToast(
-          'Reclamo guardado en tu teléfono: se enviará automáticamente al recuperar señal estable.'
+          isPublicAlert
+            ? 'Reclamo guardado en tu teléfono: se enviará y publicará en el mapa al recuperar señal.'
+            : 'Reclamo guardado en tu teléfono: se enviará automáticamente al recuperar señal estable.'
         );
       }
     } else {
       onNotifyToast(
-        'Estás sin señal: el reclamo y su foto comprimida quedaron guardados en tu teléfono.'
+        isPublicAlert
+          ? 'Estás sin señal: el reclamo quedó guardado en tu teléfono y la alerta aparecerá en el mapa recién al sincronizarse.'
+          : 'Estás sin señal: el reclamo y su foto comprimida quedaron guardados en tu teléfono.'
       );
     }
 
     setTitle('');
     setDescription('');
     setCompressedPhoto(null);
+    setIsPublicAlert(false);
     setSubmitting(false);
     setSubView('list');
     await loadClaimsList(0, true);
+  };
+
+  const handleUnpublishAlert = async (claimId: string) => {
+    if (!navigator.onLine) {
+      onNotifyToast('Necesitás conexión a internet para bajar el aviso del mapa de vecinos.');
+      return;
+    }
+    const ok = window.confirm(
+      '¿Bajar este aviso del mapa de vecinos? Tu reclamo seguirá abierto para la municipalidad.'
+    );
+    if (!ok) return;
+
+    setUnpublishingId(claimId);
+    try {
+      const { error } = await supabase.rpc('unpublish_my_claim_alert', {
+        p_claim_id: claimId,
+      });
+      if (error) {
+        onNotifyToast(`No se pudo bajar el aviso: ${error.message}`);
+        return;
+      }
+      setPublishedAlertIds((prev) => {
+        const next = new Set(prev);
+        next.delete(claimId);
+        return next;
+      });
+      onNotifyToast('Aviso bajado del mapa de vecinos. Tu reclamo sigue activo para el municipio.');
+    } finally {
+      setUnpublishingId(null);
+    }
   };
 
   // SUB-VISTA 1: DETALLE DE UN RECLAMO
@@ -442,6 +501,35 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
                 {CLAIM_STATUS_LABELS[claimDetail.status]}
               </span>
             </div>
+
+            {publishedAlertIds.has(claimDetail.id) && (
+              <div
+                style={{
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  borderRadius: 10,
+                  padding: '10px 12px',
+                  marginBottom: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 13, color: '#1e3a8a', fontWeight: 600 }}>
+                  Este reclamo está publicado como alerta en el mapa de vecinos.
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={unpublishingId === claimDetail.id}
+                  onClick={() => handleUnpublishAlert(claimDetail.id)}
+                >
+                  {unpublishingId === claimDetail.id
+                    ? 'Bajando aviso...'
+                    : 'Bajar aviso del mapa de vecinos'}
+                </button>
+              </div>
+            )}
 
             {claimDetail.description && (
               <p className="claim-desc-box">{claimDetail.description}</p>
@@ -716,9 +804,65 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
           )}
         </div>
 
+        {/* Visibilidad del reclamo: solo municipio vs. alerta pública para vecinos */}
+        <div
+          style={{
+            background: '#f8fafc',
+            border: '1px solid #cbd5e1',
+            borderRadius: 10,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <span className="field-label" style={{ display: 'block', marginBottom: 8 }}>
+            Visibilidad del aviso
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="claim-visibility"
+                checked={!isPublicAlert}
+                onChange={() => setIsPublicAlert(false)}
+              />
+              <span>
+                <strong>Solo enviar a la municipalidad</strong> (privado)
+              </span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="claim-visibility"
+                checked={isPublicAlert}
+                onChange={() => setIsPublicAlert(true)}
+              />
+              <span>
+                <strong>Enviar a la municipalidad y publicar alerta en el mapa de vecinos</strong>
+              </span>
+            </label>
+          </div>
+          {isPublicAlert && (
+            <small
+              style={{
+                display: 'block',
+                marginTop: 8,
+                color: '#475569',
+                fontSize: 12,
+                lineHeight: 1.4,
+              }}
+            >
+              Se publicará el título, la descripción, la foto, la ubicación exacta y la fecha (nunca tu nombre ni tu correo). No incluyas datos personales. Si estás sin señal, la alerta aparecerá en el mapa recién cuando se sincronice.
+            </small>
+          )}
+        </div>
+
         <button type="submit" className="btn-primary full-width" disabled={submitting || compressing}>
           <CheckCircle2 size={18} />
-          {submitting ? 'Guardando reclamo...' : 'Enviar reclamo vial'}
+          {submitting
+            ? 'Guardando reclamo...'
+            : isPublicAlert
+              ? 'Enviar y publicar alerta'
+              : 'Enviar reclamo vial'}
         </button>
       </form>
     );
@@ -820,7 +964,23 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
                 </div>
               )}
               <div>
-                <span className="category-chip">{claim.category_name}</span>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span className="category-chip">{claim.category_name}</span>
+                  {publishedAlertIds.has(claim.id) && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        background: '#dbeafe',
+                        color: '#1d4ed8',
+                        padding: '2px 7px',
+                        borderRadius: 999,
+                        fontWeight: 600,
+                      }}
+                    >
+                      En mapa de vecinos
+                    </span>
+                  )}
+                </div>
                 <h4>{claim.title}</h4>
                 <span className="trip-meta">
                   {new Date(claim.created_at).toLocaleDateString('es-AR')}
