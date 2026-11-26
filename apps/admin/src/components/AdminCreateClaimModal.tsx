@@ -14,6 +14,9 @@ interface AdminCreateClaimModalProps {
   onClaimCreated: (msg: string) => void;
 }
 
+const SHOW_SIMULATORS =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_SIMULATORS === 'true';
+
 export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
   categories,
   onClose,
@@ -366,14 +369,16 @@ export const AdminCreateClaimModal: React.FC<AdminCreateClaimModalProps> = ({
                   hidden
                 />
               </label>
-              <button
-                type="button"
-                className="btn-outline"
-                onClick={handleGenerateSamplePhoto}
-                disabled={compressing || submitting}
-              >
-                <Sparkles size={15} /> Generar foto de prueba (PC)
-              </button>
+              {SHOW_SIMULATORS && (
+                <button
+                  type="button"
+                  className="btn-outline"
+                  onClick={handleGenerateSamplePhoto}
+                  disabled={compressing || submitting}
+                >
+                  <Sparkles size={15} /> Generar foto de prueba (PC)
+                </button>
+              )}
             </div>
 
             {compressedPhoto && (

@@ -677,7 +677,7 @@ export const App: React.FC = () => {
       },
       (err) => {
         setGpsError(
-          `No pudimos leer el GPS (${err.message}). Verificá que la ubicación esté encendida o probá con el Simulador.`
+          `No pudimos leer el GPS (${err.message}). Verificá que la ubicación del teléfono esté encendida y con permisos habilitados.`
         );
       },
       {

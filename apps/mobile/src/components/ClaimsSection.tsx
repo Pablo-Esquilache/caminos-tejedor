@@ -111,6 +111,9 @@ export async function syncSingleClaimOutboxItem(
   }
 }
 
+const SHOW_SIMULATORS =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_SIMULATORS === 'true';
+
 export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
   userId,
   isOnline,
@@ -606,13 +609,15 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
               >
                 <MapPin size={14} /> {locLoading ? 'Buscando...' : 'Mi GPS'}
               </button>
-              <button
-                type="button"
-                className="btn-small"
-                onClick={pickSimulatedRoadLocation}
-              >
-                <Sparkles size={14} /> Punto de prueba
-              </button>
+              {SHOW_SIMULATORS && (
+                <button
+                  type="button"
+                  className="btn-small"
+                  onClick={pickSimulatedRoadLocation}
+                >
+                  <Sparkles size={14} /> Punto de prueba
+                </button>
+              )}
             </div>
           </div>
           <small className="muted-text">
@@ -676,14 +681,16 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
                   hidden
                 />
               </label>
-              <button
-                type="button"
-                className="btn-small full-width"
-                onClick={handleGenerateSimulatedPhoto}
-                disabled={compressing}
-              >
-                <ImageIcon size={15} /> Generar foto de prueba (Simulador PC)
-              </button>
+              {SHOW_SIMULATORS && (
+                <button
+                  type="button"
+                  className="btn-small full-width"
+                  onClick={handleGenerateSimulatedPhoto}
+                  disabled={compressing}
+                >
+                  <ImageIcon size={15} /> Generar foto de prueba (Simulador PC)
+                </button>
+              )}
             </div>
           ) : (
             <div className="photo-preview-card">
