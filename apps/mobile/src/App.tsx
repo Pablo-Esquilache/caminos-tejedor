@@ -52,7 +52,7 @@ import {
   type PendingTripOutboxItem,
 } from './lib/localDb';
 import { RouteMap } from './components/RouteMap';
-import { ConsolidatedRoadsMap } from './components/ConsolidatedRoadsMap';
+import { PublicAlertsMap, type PublicAlertItem } from './components/PublicAlertsMap';
 import { ClaimsSection, syncSingleClaimOutboxItem } from './components/ClaimsSection';
 import { NotificationsView } from './components/NotificationsView';
 import { OperatorWorkspace } from './components/OperatorWorkspace';
@@ -103,6 +103,14 @@ export const App: React.FC = () => {
   const [outboxClaimsCount, setOutboxClaimsCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [communityAlerts, setCommunityAlerts] = useState<PublicAlertItem[]>([]);
+  const [communityAlertsSeenAt, setCommunityAlertsSeenAt] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('community_alerts_seen_at_v1') || '0') || 0;
+    } catch {
+      return 0;
+    }
+  });
 
   // Estado de red y cola offline (outbox)
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -933,7 +941,25 @@ export const App: React.FC = () => {
     if (!error && data) {
       setNotifications(data as NotificationItem[]);
     }
+
+    // Cargar alertas comunitarias recientes (excluyendo propias) sin generar filas por usuario
+    const { data: pubData, error: pubErr } = await supabase.rpc('get_recent_public_alerts', {
+      p_limit: 25,
+    });
+    if (!pubErr && Array.isArray(pubData?.items)) {
+      const others = (pubData.items as PublicAlertItem[]).filter((a) => !a.is_mine);
+      setCommunityAlerts(others);
+    }
+
     setNotificationsLoading(false);
+  };
+
+  const markCommunityAlertsSeen = () => {
+    const nowMs = Date.now();
+    setCommunityAlertsSeenAt(nowMs);
+    try {
+      localStorage.setItem('community_alerts_seen_at_v1', String(nowMs));
+    } catch {}
   };
 
   const handleMarkOneRead = async (notifId: string, claimId: string | null) => {
@@ -1869,7 +1895,7 @@ export const App: React.FC = () => {
         )}
         {activeTab === 'map' && (
           <div className="tab-pane">
-            <ConsolidatedRoadsMap />
+            <PublicAlertsMap />
           </div>
         )}
         {activeTab === 'claims' && (
@@ -1899,10 +1925,19 @@ export const App: React.FC = () => {
           <div className="tab-pane">
             <NotificationsView
               notifications={notifications}
+              communityAlerts={communityAlerts}
+              communityAlertsSeenAt={communityAlertsSeenAt}
               loading={notificationsLoading}
               onRefresh={loadNotifications}
               onMarkOneRead={handleMarkOneRead}
-              onMarkAllRead={handleMarkAllRead}
+              onMarkAllRead={() => {
+                void handleMarkAllRead();
+                markCommunityAlertsSeen();
+              }}
+              onOpenAlertsMap={() => {
+                markCommunityAlertsSeen();
+                setActiveTab('map');
+              }}
             />
           </div>
         )}
@@ -1999,11 +2034,18 @@ export const App: React.FC = () => {
         >
           <div className="nav-icon-wrap">
             <Bell size={20} />
-            {notifications.filter((n) => !n.is_read).length > 0 && (
-              <span className="nav-unread-badge">
-                {notifications.filter((n) => !n.is_read).length}
-              </span>
-            )}
+            {(() => {
+              const unreadTotal =
+                notifications.filter((n) => !n.is_read).length +
+                communityAlerts.filter(
+                  (a) =>
+                    new Date(a.alert_published_at || a.created_at).getTime() >
+                    communityAlertsSeenAt
+                ).length;
+              return unreadTotal > 0 ? (
+                <span className="nav-unread-badge">{unreadTotal}</span>
+              ) : null;
+            })()}
           </div>
           <span>Avisos</span>
         </button>
