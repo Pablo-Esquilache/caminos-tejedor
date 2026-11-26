@@ -102,11 +102,16 @@ BEGIN
   END IF;
 
   -- ===========================================================================
-  -- CASO 5: Respuesta de los RPCs NO contiene user_id ni email (solo is_mine)
+  -- CASO 5: Respuesta de los RPCs NO contiene user_id ni email (solo is_mine).
+  -- Nota de diseño piloto: storage_path/thumb_path conservan el prefijo UUID
+  -- para firma directa en Storage (aceptado para el piloto; sin datos personales).
   -- ===========================================================================
   SELECT x INTO v_item FROM jsonb_array_elements(v_res->'items') x WHERE (x->>'id')::uuid = v_claim_pub LIMIT 1;
   IF (v_item ? 'user_id') OR (v_item ? 'email') OR (v_item->>'is_mine')::boolean IS NOT FALSE THEN
     RAISE EXCEPTION 'Fallo 023 (Caso 5): item expuso user_id/email o is_mine incorrecto: %', v_item;
+  END IF;
+  IF (v_item->>'storage_path') IS NULL OR position(v_vecino_a::text || '/' in v_item->>'storage_path') <> 1 THEN
+    RAISE EXCEPTION 'Fallo 023 (Caso 5): storage_path esperado con prefijo UUID del autor para firma directa: %', v_item;
   END IF;
 
   v_res := public.get_recent_public_alerts(20);

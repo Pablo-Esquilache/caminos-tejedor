@@ -191,7 +191,7 @@ export const PublicAlertsMap: React.FC = () => {
     setPhotoLoading(false);
 
     if (!selectedAlert) return;
-    const path = selectedAlert.storage_path || selectedAlert.thumb_path;
+    const path = selectedAlert.thumb_path || selectedAlert.storage_path;
     if (!path) return;
 
     let cancelled = false;
