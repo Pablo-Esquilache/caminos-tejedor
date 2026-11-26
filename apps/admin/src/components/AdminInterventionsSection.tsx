@@ -302,9 +302,15 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
     };
   }, [detailId, detailData]);
 
-  // Aprobar / Rechazar con RETORNO AUTOMÁTICO a la lista
-  const handleReview = async (newStatus: 'approved' | 'rejected') => {
+  // Aprobar / Rechazar / Reabrir con RETORNO AUTOMÁTICO a la lista
+  const handleReview = async (newStatus: 'approved' | 'rejected' | 'planned') => {
     if (!detailData) return;
+    if (newStatus === 'planned') {
+      const ok = window.confirm(
+        '¿Reabrir esta tarea rechazada y volverla a estado Planificada? Volverá a aparecer disponible para el operario con las mismas asignaciones.'
+      );
+      if (!ok) return;
+    }
     setReviewBusy(true);
     const { error } = await supabase.rpc('admin_review_intervention', {
       p_intervention_id: detailData.id,
@@ -321,7 +327,9 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
     onToast(
       newStatus === 'approved'
         ? 'Trabajo aprobado, incorporado a la capa oficial y auditado.'
-        : 'Trabajo rechazado / devuelto con observaciones.'
+        : newStatus === 'planned'
+          ? 'Tarea reabierta en estado Planificada. Ya vuelve a estar disponible para el operario.'
+          : 'Trabajo rechazado / devuelto con observaciones.'
     );
     // Volver automáticamente al listado principal
     setDetailId(null);
@@ -674,7 +682,7 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
                     onChange={(e) => setReviewNote(e.target.value)}
                     style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid #cbd5e1', marginBottom: 10 }}
                   />
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       className="btn-approve"
@@ -693,6 +701,17 @@ export const AdminInterventionsSection: React.FC<AdminInterventionsSectionProps>
                     >
                       <XCircle size={16} /> Rechazar
                     </button>
+                    {detailData.status === 'rejected' && (
+                      <button
+                        type="button"
+                        className="btn-outline"
+                        style={{ width: '100%', justifyContent: 'center' }}
+                        disabled={reviewBusy}
+                        onClick={() => handleReview('planned')}
+                      >
+                        <RefreshCw size={16} /> Reabrir tarea (volver a Planificada)
+                      </button>
+                    )}
                   </div>
                 </div>
 
