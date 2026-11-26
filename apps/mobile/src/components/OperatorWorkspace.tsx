@@ -88,6 +88,9 @@ interface OperatorWorkspaceProps {
   onSyncPendingChange?: (count: number) => void;
 }
 
+const SHOW_SIMULATORS =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_SIMULATORS === 'true';
+
 export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   userId,
   isOnline,
@@ -1143,6 +1146,11 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
     const srcLabel = source === 'camera' ? 'cámara' : 'galería';
 
     if (!files || fileCount === 0) {
+      const recentSig = lastProcessedFileSigRef.current;
+      if (recentSig && Date.now() - recentSig.at < 15000) {
+        if (inputEl) inputEl.value = '';
+        return;
+      }
       setPhotoDiag(
         `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=0 | handlePhotoPick=sí`
       );
@@ -1187,6 +1195,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
         `Diagnóstico foto: fuente=${srcLabel} | origen=${origin} | archivos=${fileCount} | adjuntadas=+${added.length}`
       );
     } catch (err: any) {
+      lastProcessedFileSigRef.current = null;
       console.error('Error procesando fotografía:', err);
       const errTxt = `No se pudo procesar la fotografía: ${err?.message || 'Error de memoria'}. Probá seleccionando otra foto o con menor resolución.`;
       setPhotoError(errTxt);
@@ -1519,25 +1528,27 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                 </div>
               </div>
 
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 12,
-                  color: '#475569',
-                  margin: '8px 0 12px',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={useSimulator}
-                  onChange={(e) => {
-                    setUseSimulator(e.target.checked);
+              {SHOW_SIMULATORS && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 12,
+                    color: '#475569',
+                    margin: '8px 0 12px',
                   }}
-                />
-                Usar simulador de prueba (escritorio / sin movimiento real)
-              </label>
+                >
+                  <input
+                    type="checkbox"
+                    checked={useSimulator}
+                    onChange={(e) => {
+                      setUseSimulator(e.target.checked);
+                    }}
+                  />
+                  Usar simulador de prueba (escritorio / sin movimiento real)
+                </label>
+              )}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1710,7 +1721,10 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                       />
                       <button
                         type="button"
-                        onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                        onClick={() => {
+                          lastProcessedFileSigRef.current = null;
+                          setPhotos((prev) => prev.filter((_, i) => i !== idx));
+                        }}
                         style={{
                           position: 'absolute',
                           top: -4,
@@ -1796,7 +1810,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
                     </button>
                   </div>
                 )}
-                {photoDiag && (
+                {photoError && photoDiag && (
                   <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
                     {photoDiag}
                   </div>
@@ -1927,7 +1941,7 @@ export const OperatorWorkspace: React.FC<OperatorWorkspaceProps> = ({
   }
 
   const renderTaskCard = (t: InterventionSummary) => {
-    const isActionable = ['planned', 'suspended', 'in_progress', 'rejected'].includes(
+    const isActionable = ['planned', 'suspended', 'in_progress'].includes(
       t.status
     );
     const isExpanded = previewTaskId === t.id;
