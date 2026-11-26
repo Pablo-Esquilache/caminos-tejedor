@@ -19,6 +19,7 @@ DECLARE
   v_res           jsonb;
   v_i             integer;
   v_tmp_seg_id    uuid;
+  v_denied        boolean;
 BEGIN
   -- 1. Preparar usuarios de prueba en auth.users y rol admin
   INSERT INTO auth.users (id, email, raw_user_meta_data)
@@ -52,28 +53,35 @@ BEGIN
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_nonadmin::text, 'role', 'authenticated')::text, true);
   EXECUTE 'SET LOCAL ROLE authenticated';
 
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_valid_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', v_hash);
-    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar admin_save_segment_elevation';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%administradores%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%administradores%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar admin_save_segment_elevation';
+  END IF;
 
+  v_denied := false;
   BEGIN
     PERFORM public.get_admin_low_zones_map(-63.0, -36.0, -61.8, -34.8);
-    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar get_admin_low_zones_map';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%administradores%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%administradores%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar get_admin_low_zones_map';
+  END IF;
 
+  v_denied := false;
   BEGIN
     PERFORM public.admin_recalculate_intervention_metrics(gen_random_uuid());
-    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar admin_recalculate_intervention_metrics';
   EXCEPTION WHEN SQLSTATE '42501' THEN
-    IF SQLERRM NOT LIKE '%Permiso denegado%' THEN
-      RAISE;
-    END IF;
+    IF SQLERRM LIKE '%Permiso denegado%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo seguridad 021: no-admin pudo llamar admin_recalculate_intervention_metrics';
+  END IF;
 
   EXECUTE 'RESET ROLE';
 
@@ -84,42 +92,54 @@ BEGIN
   EXECUTE 'SET LOCAL ROLE authenticated';
 
   -- 2.a Hash distinto -> rechazado
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_valid_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', 'hash_invalido_000');
-    RAISE EXCEPTION 'Fallo 021: aceptó geom_hash distinto';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%geom_hash no coincide%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%geom_hash no coincide%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 021: aceptó geom_hash distinto';
+  END IF;
 
   -- 2.b Caracterización: p_expected_geom_hash IS NULL hoy saltea el chequeo de hash
   PERFORM public.admin_save_segment_elevation(v_seg_id, v_valid_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', NULL);
 
   -- 2.c Cotas fuera de rango (-50..500 m) -> rechazadas
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_valid_pts, NULL, -60.0, 94.1, 94.05, false, 'copernicus-dem-90m', v_hash);
-    RAISE EXCEPTION 'Fallo 021: aceptó cota < -50';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%fuera de rango%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%fuera de rango%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 021: aceptó cota < -50';
+  END IF;
 
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_valid_pts, NULL, 94.0, 550.0, 94.05, false, 'copernicus-dem-90m', v_hash);
-    RAISE EXCEPTION 'Fallo 021: aceptó cota > 500';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%fuera de rango%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%fuera de rango%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 021: aceptó cota > 500';
+  END IF;
 
   -- 2.d Bordes exactos de tamaño de payload (1 -> rechaza, 300 -> acepta, 301 -> rechaza)
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(
       v_seg_id,
       '[{"dist_m":0,"lat":-35.40,"lon":-62.42,"elev_m":94.1,"is_low_zone":false}]'::jsonb,
       NULL, 94.1, 94.1, 94.1, false, 'copernicus-dem-90m', v_hash
     );
-    RAISE EXCEPTION 'Fallo 021: aceptó 1 sola muestra (mínimo es 2)';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%fuera de rango permitido%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%fuera de rango permitido%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 021: aceptó 1 sola muestra (mínimo es 2)';
+  END IF;
 
   SELECT jsonb_agg(jsonb_build_object('dist_m', g * 90, 'lat', -35.4, 'lon', -62.42, 'elev_m', 94.0, 'is_low_zone', false))
   INTO v_oversize_pts
@@ -130,12 +150,15 @@ BEGIN
   INTO v_oversize_pts
   FROM generate_series(0, 300) AS g;
 
+  v_denied := false;
   BEGIN
     PERFORM public.admin_save_segment_elevation(v_seg_id, v_oversize_pts, NULL, 94.0, 94.1, 94.05, false, 'copernicus-dem-90m', v_hash);
-    RAISE EXCEPTION 'Fallo 021: aceptó 301 muestras (máximo es 300)';
   EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM NOT LIKE '%fuera de rango permitido%' THEN RAISE; END IF;
+    IF SQLERRM LIKE '%fuera de rango permitido%' THEN v_denied := true; ELSE RAISE; END IF;
   END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 021: aceptó 301 muestras (máximo es 300)';
+  END IF;
 
   -- ===========================================================================
   -- CASO 3: Sembrar 301 zonas bajas y verificar truncated = true y límite 300

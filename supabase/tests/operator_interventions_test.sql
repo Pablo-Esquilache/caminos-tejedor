@@ -202,22 +202,34 @@ BEGIN
   END IF;
 
   -- Vecino tampoco puede pedir estadísticas ni tareas de operario
+  DECLARE
+    v_denied boolean := false;
   BEGIN
-    PERFORM public.get_intervention_statistics();
-    RAISE EXCEPTION 'Fallo Seguridad: Vecino pudo ejecutar get_intervention_statistics()';
-  EXCEPTION WHEN OTHERS THEN
-    NULL;
+    BEGIN
+      PERFORM public.get_intervention_statistics();
+    EXCEPTION WHEN OTHERS THEN
+      v_denied := true;
+    END;
+    IF NOT v_denied THEN
+      RAISE EXCEPTION 'Fallo Seguridad: Vecino pudo ejecutar get_intervention_statistics()';
+    END IF;
   END;
 
   -- Verificar rol Anónimo
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '{}', true);
   EXECUTE 'SET LOCAL ROLE anon';
+  DECLARE
+    v_anon_denied boolean := false;
   BEGIN
-    SELECT COUNT(*) INTO v_cnt FROM public.work_types;
-    RAISE EXCEPTION 'Fallo RLS Anon: Anónimo no debe poder leer work_types';
-  EXCEPTION WHEN insufficient_privilege OR OTHERS THEN
-    NULL;
+    BEGIN
+      SELECT COUNT(*) INTO v_cnt FROM public.work_types;
+    EXCEPTION WHEN insufficient_privilege THEN
+      v_anon_denied := true;
+    END;
+    IF NOT v_anon_denied THEN
+      RAISE EXCEPTION 'Fallo RLS Anon: Anónimo no debe poder leer work_types';
+    END IF;
   END;
 
   -- ---------------------------------------------------------------------------

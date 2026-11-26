@@ -39,36 +39,40 @@ BEGIN
   END IF;
 
   -- ===========================================================================
-  -- CASO 1: Usuario A inserta recorrido (incluso intentando forzar approved) y reclamo
+  -- CASO 1: Usuario A inserta recorrido y reclamo vía RPCs (escritura directa cerrada en 022)
   -- ===========================================================================
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text, 'role', 'authenticated')::text, true);
   EXECUTE 'SET LOCAL ROLE authenticated';
 
-  INSERT INTO public.trips (id, user_id, original_name, started_at, ended_at, distance_m, duration_s, status)
-  VALUES (v_trip_a, v_user_a, 'Camino a Timote', now() - interval '30 minutes', now(), 5200, 1800, 'approved');
+  PERFORM public.submit_trip_with_track(
+    v_trip_a,
+    'Camino a Timote',
+    now() - interval '30 minutes',
+    now(),
+    5200,
+    1800,
+    '[{"lat":-35.3928,"lon":-62.4208},{"lat":-35.4028,"lon":-62.4208}]'::jsonb
+  );
 
-  -- Verificar que el trigger forzó el estado a 'pending' por no ser admin
+  -- Verificar que el recorrido de Usuario A entró en estado 'pending'
   SELECT status INTO v_status FROM public.trips WHERE id = v_trip_a;
   IF v_status <> 'pending' THEN
-    RAISE EXCEPTION 'Fallo RLS/Trigger: Usuario A intentó insertar approved y quedó en % (esperado: pending)', v_status;
+    RAISE EXCEPTION 'Fallo RLS/Trigger: Usuario A insertó recorrido y quedó en % (esperado: pending)', v_status;
   END IF;
 
-  INSERT INTO public.claims (id, user_id, title, description, category_id, location, status, priority)
-  VALUES (
+  PERFORM public.submit_claim_with_photo(
     v_claim_a,
-    v_user_a,
     'Alcantarilla rota en bajada',
     'No se puede pasar con lluvia',
     v_cat_id,
-    ST_SetSRID(ST_MakePoint(-62.4208, -35.3928), 4326),
-    'solved',
-    'high'
+    -35.3928,
+    -62.4208
   );
 
-  -- Verificar que el trigger forzó el reclamo de Usuario A a 'received' y 'medium'
+  -- Verificar que el reclamo de Usuario A entró en estado 'received'
   SELECT status INTO v_status FROM public.claims WHERE id = v_claim_a;
   IF v_status <> 'received' THEN
-    RAISE EXCEPTION 'Fallo RLS/Trigger: Usuario A intentó insertar reclamo solved y quedó en %', v_status;
+    RAISE EXCEPTION 'Fallo RLS/Trigger: Usuario A insertó reclamo y quedó en %', v_status;
   END IF;
 
   -- Intentar que Usuario A cambie el estado de su propio reclamo (debe ser bloqueado por RLS: 0 filas afectadas)
@@ -79,23 +83,29 @@ BEGIN
   END IF;
 
   -- ===========================================================================
-  -- CASO 2: Usuario B inserta sus datos y verificamos aislamiento entre A y B
+  -- CASO 2: Usuario B inserta sus datos vía RPC y verificamos aislamiento entre A y B
   -- ===========================================================================
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text, 'role', 'authenticated')::text, true);
   EXECUTE 'SET LOCAL ROLE authenticated';
 
-  INSERT INTO public.trips (id, user_id, original_name, started_at, ended_at, distance_m, duration_s)
-  VALUES (v_trip_b, v_user_b, 'Camino Colonia Seré', now() - interval '20 minutes', now(), 3100, 1200);
+  PERFORM public.submit_trip_with_track(
+    v_trip_b,
+    'Camino Colonia Seré',
+    now() - interval '20 minutes',
+    now(),
+    3100,
+    1200,
+    '[{"lat":-35.4100,"lon":-62.4500},{"lat":-35.4200,"lon":-62.4500}]'::jsonb
+  );
 
-  INSERT INTO public.claims (id, user_id, title, description, category_id, location)
-  VALUES (
+  PERFORM public.submit_claim_with_photo(
     v_claim_b,
-    v_user_b,
     'Pozo profundo',
     'Cerca de la escuela',
     v_cat_id,
-    ST_SetSRID(ST_MakePoint(-62.4500, -35.4100), 4326)
+    -35.4100,
+    -62.4500
   );
 
   -- Usuario B NO debe ver el recorrido ni el reclamo ni el perfil de Usuario A
@@ -139,8 +149,15 @@ BEGIN
   EXECUTE 'SET LOCAL ROLE authenticated';
 
   -- El recorrido de un administrador debe entrar automáticamente como 'approved'
-  INSERT INTO public.trips (id, user_id, original_name, started_at, ended_at, distance_m, duration_s)
-  VALUES (v_trip_adm, v_admin, 'Relevamiento Municipal Ruta 226', now() - interval '40 minutes', now(), 12000, 2400);
+  PERFORM public.submit_trip_with_track(
+    v_trip_adm,
+    'Relevamiento Municipal Ruta 226',
+    now() - interval '40 minutes',
+    now(),
+    12000,
+    2400,
+    '[{"lat":-35.3800,"lon":-62.4100},{"lat":-35.3900,"lon":-62.4100}]'::jsonb
+  );
 
   SELECT status INTO v_status FROM public.trips WHERE id = v_trip_adm;
   IF v_status <> 'approved' THEN
