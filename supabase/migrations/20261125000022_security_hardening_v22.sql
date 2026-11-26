@@ -376,7 +376,7 @@ BEGIN
       IF v_created_road_id IS NOT NULL THEN
         UPDATE public.roads
         SET road_class = p_initial_road_class,
-            classification_mode = 'manual',
+            is_manual_class = true,
             updated_at = now()
         WHERE id = v_created_road_id;
       END IF;

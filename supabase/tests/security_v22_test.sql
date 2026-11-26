@@ -35,6 +35,8 @@ DECLARE
   v_escaped  text;
   v_rows     integer;
   v_email    text;
+  v_adm_trip uuid := gen_random_uuid();
+  v_adm_manual boolean;
 BEGIN
   -- 1. Crear usuarios de prueba
   INSERT INTO auth.users (id, email, raw_user_meta_data)
@@ -322,8 +324,31 @@ BEGIN
     RAISE EXCEPTION 'Fallo 022: se pudo registrar trabajo sobre una tarea ya en pending_approval';
   END IF;
 
+  -- ===========================================================================
+  -- PRUEBA 5: Admin crea recorrido con jerarquía inicial 'troncal' -> is_manual_class = true
+  -- ===========================================================================
   RESET ROLE;
-  RAISE NOTICE '   ✅ Suite Seguridad 022 OK -> RLS escrituras directas, idempotencia, rutas Storage, asignación, estados (incl. rejected), límites y escape HTML verificados.';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  EXECUTE 'SET LOCAL ROLE authenticated';
+
+  PERFORM public.submit_trip_with_track(
+    v_adm_trip, 'Tramo Troncal Test 022', now() - interval '15 min', now(), 1500, 900,
+    '[{"lat":-35.5200,"lon":-62.5800},{"lat":-35.5350,"lon":-62.5800}]'::jsonb,
+    'troncal'
+  );
+
+  SELECT r.is_manual_class INTO v_adm_manual
+  FROM public.roads r
+  JOIN public.road_segments s ON s.road_id = r.id
+  WHERE s.created_by_trip_id = v_adm_trip
+  LIMIT 1;
+
+  IF v_adm_manual IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Fallo 022: submit_trip_with_track con p_initial_road_class no dejó is_manual_class = true (obtenido: %)', v_adm_manual;
+  END IF;
+
+  RESET ROLE;
+  RAISE NOTICE '   ✅ Suite Seguridad 022 OK -> RLS escrituras directas, idempotencia, rutas Storage, asignación, estados, límites, is_manual_class y escape HTML verificados.';
 END $$;
 
 ROLLBACK;
