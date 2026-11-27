@@ -54,7 +54,7 @@ interface ClaimsSectionProps {
 export async function syncSingleClaimOutboxItem(
   userId: string,
   item: PendingClaimOutboxItem,
-  onAlertReason?: (reason: string) => void
+  onAlertResult?: (published: boolean, reason: string | null) => void
 ): Promise<boolean> {
   try {
     let storagePath = item.uploaded_storage_path;
@@ -100,8 +100,10 @@ export async function syncSingleClaimOutboxItem(
 
     if (rpcError) throw rpcError;
 
-    if (rpcData && rpcData.alert_published === false && rpcData.alert_reason && onAlertReason) {
-      onAlertReason(String(rpcData.alert_reason));
+    if (onAlertResult) {
+      const published = rpcData?.alert_published === true;
+      const reason = rpcData?.alert_reason ? String(rpcData.alert_reason) : null;
+      onAlertResult(published, reason);
     }
 
     await removeClaimFromOutbox(item.id);
@@ -405,16 +407,18 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
     onOutboxChange();
 
     // 2. Si hay conexión, subir fotos comprimidas al bucket privado y crear reclamo en el acto
+    let serverAlertPublished = false;
     let alertFallbackReason: string | null = null;
     if (navigator.onLine) {
-      const ok = await syncSingleClaimOutboxItem(userId, outboxItem, (reason) => {
+      const ok = await syncSingleClaimOutboxItem(userId, outboxItem, (published, reason) => {
+        serverAlertPublished = published;
         alertFallbackReason = reason;
       });
       onOutboxChange();
       if (ok) {
         if (alertFallbackReason) {
           onNotifyToast(alertFallbackReason);
-        } else if (isPublicAlert) {
+        } else if (serverAlertPublished) {
           onNotifyToast('¡Reclamo enviado y publicado como alerta en el mapa de vecinos!');
         } else {
           onNotifyToast('¡Reclamo enviado correctamente! Quedó registrado con estado "Recibido".');
