@@ -426,14 +426,14 @@ export const ClaimsSection: React.FC<ClaimsSectionProps> = ({
       } else {
         onNotifyToast(
           isPublicAlert
-            ? 'Reclamo guardado en tu teléfono: se enviará y publicará en el mapa al recuperar señal.'
+            ? 'Reclamo guardado en tu teléfono: se enviará al recuperar señal. La publicación en el mapa dependerá de la validación de los límites del servidor.'
             : 'Reclamo guardado en tu teléfono: se enviará automáticamente al recuperar señal estable.'
         );
       }
     } else {
       onNotifyToast(
         isPublicAlert
-          ? 'Estás sin señal: el reclamo quedó guardado en tu teléfono y la alerta aparecerá en el mapa recién al sincronizarse.'
+          ? 'Estás sin señal: el reclamo quedó guardado en tu teléfono y se enviará al recuperar señal. La publicación en el mapa se confirmará al validar los límites del servidor.'
           : 'Estás sin señal: el reclamo y su foto comprimida quedaron guardados en tu teléfono.'
       );
     }
