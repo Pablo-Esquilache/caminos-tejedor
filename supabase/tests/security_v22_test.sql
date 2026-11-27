@@ -255,11 +255,19 @@ BEGIN
     RAISE EXCEPTION 'Fallo 022: Operario A pudo modificar una tarea ya aprobada';
   END IF;
 
-  -- Operario A puede registrar sobre tarea rechazada en 022 (se bloqueará en migración posterior tras APK con A1)
-  PERFORM public.operator_submit_session(
-    gen_random_uuid(), v_int_rej, 'suspend', 'linear', NULL, NULL,
-    now() - interval '10 min', now(), v_pts, 1100, 600
-  );
+  -- Operario A intenta modificar tarea RECHAZADA -> bloqueado con 22023 desde migración 024
+  v_denied := false;
+  BEGIN
+    PERFORM public.operator_submit_session(
+      gen_random_uuid(), v_int_rej, 'suspend', 'linear', NULL, NULL,
+      now() - interval '10 min', now(), v_pts, 1100, 600
+    );
+  EXCEPTION WHEN SQLSTATE '22023' THEN
+    v_denied := true;
+  END;
+  IF NOT v_denied THEN
+    RAISE EXCEPTION 'Fallo 022/024: Operario A pudo registrar trabajo sobre una tarea rechazada';
+  END IF;
 
   -- Operario A intenta adjuntar > 3 fotos -> rechazado
   v_denied := false;
