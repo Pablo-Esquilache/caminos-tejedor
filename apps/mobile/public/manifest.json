@@ -1,7 +1,7 @@
 {
-  "name": "Caminos Rurales — Carlos Tejedor",
-  "short_name": "Caminos Tejedor",
-  "description": "Relevamiento colaborativo y reclamos de caminos rurales del Partido de Carlos Tejedor",
+  "name": "Caminos Rurales",
+  "short_name": "Caminos Rurales",
+  "description": "Relevamiento colaborativo, alertas y reclamos de caminos rurales",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

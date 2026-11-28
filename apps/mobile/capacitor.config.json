@@ -1,6 +1,6 @@
 {
   "appId": "com.caminosrurales.tejedor",
-  "appName": "Caminos Tejedor",
+  "appName": "Caminos Rurales",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

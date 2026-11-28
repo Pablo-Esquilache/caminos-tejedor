@@ -1278,7 +1278,7 @@ export const AdminMap: React.FC<AdminMapProps> = ({
             }}
           >
             <div className="layer-panel-title">
-              {layerPanelCollapsed ? 'Capas y Filtros' : 'Capas del Partido de Carlos Tejedor'}
+              {layerPanelCollapsed ? 'Capas y Filtros' : 'Capas y Filtros del Mapa'}
             </div>
             <button
               type="button"

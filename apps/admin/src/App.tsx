@@ -657,12 +657,12 @@ export const App: React.FC = () => {
           <div className="admin-login-badge">
             <img
               src={`${import.meta.env.BASE_URL}favicon.svg`}
-              alt="Caminos Rurales Carlos Tejedor"
+              alt="Caminos Rurales"
               style={{ width: 64, height: 64, borderRadius: 14 }}
             />
           </div>
-          <h1>Panel Municipal</h1>
-          <p className="admin-login-sub">Caminos Rurales — Partido de Carlos Tejedor</p>
+          <h1>Panel de Gestión</h1>
+          <p className="admin-login-sub">Caminos Rurales — Gestión Vial Rural</p>
 
           {authError && (
             <div className="admin-alert-error">
@@ -718,11 +718,11 @@ export const App: React.FC = () => {
         <div className="sidebar-brand">
           <img
             src={`${import.meta.env.BASE_URL}favicon.svg`}
-            alt="Caminos Rurales Carlos Tejedor"
+            alt="Caminos Rurales"
             style={{ width: 34, height: 34, borderRadius: 8, flexShrink: 0 }}
           />
           <div>
-            <strong>Carlos Tejedor</strong>
+            <strong>Caminos Rurales</strong>
             <span>Gestión Vial Rural</span>
           </div>
         </div>
@@ -871,7 +871,7 @@ export const App: React.FC = () => {
           <div className="admin-page">
             <div className="page-header">
               <div>
-                <h1>Resumen Operativo — Partido de Carlos Tejedor</h1>
+                <h1>Resumen Operativo — Caminos Rurales</h1>
                 <p>Estado actual de relevamiento, validación y red consolidada de caminos</p>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -971,7 +971,7 @@ export const App: React.FC = () => {
           <div className="admin-page">
             <div className="page-header">
               <div>
-                <h1>Mapa General del Partido de Carlos Tejedor</h1>
+                <h1>Mapa General — Caminos Rurales</h1>
                 <p>
                   Muestra la Red Consolidada de Caminos (con grosor y color según intensidad de uso y etiquetas de nombre) más los recorridos pendientes.
                 </p>

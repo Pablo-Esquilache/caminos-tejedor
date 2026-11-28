@@ -229,7 +229,7 @@ public class LocationService extends Service implements LocationListener {
                     this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         }
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Caminos Tejedor: grabacion activa")
+                .setContentTitle("Caminos Rurales: grabacion activa")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setOngoing(true)

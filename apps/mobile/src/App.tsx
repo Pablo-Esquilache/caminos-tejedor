@@ -1116,10 +1116,10 @@ export const App: React.FC = () => {
       <div className="app-shell login-screen">
         <div className="login-card">
           <div className="brand-badge" style={{ background: 'transparent', padding: 0 }}>
-            <img src="/favicon.svg" alt="Caminos Rurales Carlos Tejedor" style={{ width: 68, height: 68, borderRadius: 15 }} />
+            <img src="/favicon.svg" alt="Caminos Rurales" style={{ width: 68, height: 68, borderRadius: 15 }} />
           </div>
           <h1>Caminos Rurales</h1>
-          <p className="subtitle">Partido de Carlos Tejedor</p>
+          <p className="subtitle">Gestión y Relevamiento Vial</p>
           <p className="login-desc">
             Relevamiento colaborativo de la red vial rural. Grabá tus recorridos en el campo aún sin señal y ayudá a mantener actualizado el mapa del partido.
           </p>
@@ -1255,7 +1255,7 @@ export const App: React.FC = () => {
         <div>
           <div className="top-bar-title">
             <img src="/favicon.svg" alt="" style={{ width: 24, height: 24, borderRadius: 6 }} />
-            <span>Caminos Tejedor</span>
+            <span>Caminos Rurales</span>
           </div>
           <span className="user-email-sub">{session.user.email}</span>
             {isAdmin && (
@@ -1419,14 +1419,14 @@ export const App: React.FC = () => {
             </div>
             <h2>Configuración inicial para el campo</h2>
             <p>
-              Bienvenido a <strong>Caminos Rurales Carlos Tejedor</strong>. Para que el rastreo GPS funcione sin cortarse con la <strong>pantalla bloqueada</strong> o mientras usás otras apps (como WhatsApp), verificá estos 3 puntos:
+              Bienvenido a <strong>Caminos Rurales</strong>. Para que el rastreo GPS funcione sin cortarse con la <strong>pantalla bloqueada</strong> o mientras usás otras apps (como WhatsApp), verificá estos 3 puntos:
             </p>
             <ul className="permission-list">
               <li>
                 <strong>1. Ubicación Precisa activada:</strong> Cuando el teléfono te pida permiso de ubicación, elegí <em>"Mientras la app está en uso"</em> y verificá que esté marcada la opción <strong>"Ubicación precisa"</strong>.
               </li>
               <li>
-                <strong>2. Notificaciones permitidas:</strong> Permití las notificaciones para ver el aviso fijo de <em>"Caminos Tejedor: grabacion activa"</em> en la barra superior y recibir alertas si se pierde la señal satelital.
+                <strong>2. Notificaciones permitidas:</strong> Permití las notificaciones para ver el aviso fijo de <em>"Caminos Rurales: grabacion activa"</em> en la barra superior y recibir alertas si se pierde la señal satelital.
               </li>
               <li>
                 <strong>3. Uso en segundo plano / Batería:</strong> Si tu celular tiene ahorro de batería estricto, dejá esta aplicación en <em>"Sin restricciones"</em> para que Android no detenga el GPS en recorridos largos.
